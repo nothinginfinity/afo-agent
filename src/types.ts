@@ -115,7 +115,7 @@ export const riskRank: Record<ToolRisk, number> = {
 export function publicToolManifest(manifest: ToolManifest): PublicToolManifest {
   return {
     ...manifest,
-    inputSchema: manifest.inputSchema.description || manifest.inputSchema.constructor.name,
-    outputSchema: manifest.outputSchema.description || manifest.outputSchema.constructor.name
+    inputSchema: "zod",
+    outputSchema: "zod"
   };
 }
