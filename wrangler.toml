@@ -1,0 +1,20 @@
+name = "afo-agent-gateway"
+main = "worker/src/index.ts"
+compatibility_date = "2026-06-19"
+
+[[d1_databases]]
+binding = "AFO_DB"
+database_name = "afo-agent-db"
+database_id = "replace-me"
+
+[[r2_buckets]]
+binding = "AFO_ARTIFACTS"
+bucket_name = "afo-agent-artifacts"
+
+[[durable_objects.bindings]]
+name = "AFO_AGENT_SESSION"
+class_name = "AfoAgentSession"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["AfoAgentSession"]
