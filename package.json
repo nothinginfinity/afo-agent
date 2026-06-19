@@ -8,14 +8,18 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev:example": "tsx examples/release-blogger.ts",
-    "dev:lead": "tsx examples/lead-agent.ts"
+    "dev:lead": "tsx examples/lead-agent.ts",
+    "worker:dev": "wrangler dev",
+    "worker:deploy": "wrangler deploy"
   },
   "dependencies": {
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250619.0",
     "@types/node": "^22.10.2",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "wrangler": "^4.0.0"
   }
 }
