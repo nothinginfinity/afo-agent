@@ -1,5 +1,4 @@
-import { z } from "zod";
-import { createAfoRuntime, LeadAfoAgent } from "../../src/index.js";
+import { createAfoRuntime, LeadAfoAgent, registerDefaultAfoTools } from "../../src/index.js";
 
 export class AfoAgentSession {
   state: DurableObjectState;
@@ -20,29 +19,7 @@ type Env = {
 };
 
 const runtime = createAfoRuntime();
-
-runtime.registry.register({
-  manifest: {
-    id: "registry.search",
-    name: "RegistrySearch",
-    description: "Search the AFO tool registry from the Worker gateway.",
-    capabilities: ["discover tools", "search registry", "list capabilities"],
-    inputSchema: z.object({ capability: z.string(), riskMax: z.enum(["read", "network", "write", "money", "destructive"]).optional() }),
-    outputSchema: z.object({ matches: z.array(z.object({ id: z.string(), name: z.string(), risk: z.string(), environment: z.string() })) }),
-    permissions: ["registry:read"],
-    environment: "worker",
-    risk: "read",
-    version: "0.1.0"
-  },
-  handler: async (input) => ({
-    matches: runtime.registry.search({ capability: input.capability, riskMax: input.riskMax }).map((tool) => ({
-      id: tool.manifest.id,
-      name: tool.manifest.name,
-      risk: tool.manifest.risk,
-      environment: tool.manifest.environment
-    }))
-  })
-});
+registerDefaultAfoTools(runtime);
 
 async function readJson(request: Request) {
   try {
