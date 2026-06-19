@@ -17,6 +17,11 @@ export type ToolManifest<I = unknown, O = unknown> = {
   version: string;
 };
 
+export type PublicToolManifest = Omit<ToolManifest, "inputSchema" | "outputSchema"> & {
+  inputSchema: string;
+  outputSchema: string;
+};
+
 export type ToolExecutionContext = {
   agent: AgentDefinition;
   requestId: string;
@@ -106,3 +111,11 @@ export const riskRank: Record<ToolRisk, number> = {
   money: 4,
   destructive: 5
 };
+
+export function publicToolManifest(manifest: ToolManifest): PublicToolManifest {
+  return {
+    ...manifest,
+    inputSchema: manifest.inputSchema.description || manifest.inputSchema.constructor.name,
+    outputSchema: manifest.outputSchema.description || manifest.outputSchema.constructor.name
+  };
+}
