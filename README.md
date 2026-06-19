@@ -22,7 +22,7 @@ AFO.Agent is intended to become the lead agent layer that lets ChatGPT, Claude, 
 
 ## Current v0.1.0
 
-This first scaffold includes:
+This scaffold includes:
 
 - typed `AfoAgent` intent shell
 - in-memory `ToolRegistry`
@@ -31,8 +31,9 @@ This first scaffold includes:
 - `ReceiptSink` audit logs
 - `LeadAfoAgent` definition for orchestrating other agents
 - example `ReleaseBlogger` agent
-- mock local repository tools
-- Cloudflare architecture notes
+- example tool manifest
+- Cloudflare Worker gateway scaffold
+- D1 schema seed
 
 ## Install
 
@@ -43,14 +44,31 @@ npm install
 ## Run examples
 
 ```bash
-npm run dev:example
 npm run dev:lead
+npm run dev:example
 ```
 
 ## Build
 
 ```bash
 npm run build
+```
+
+## Worker dev
+
+```bash
+npm run worker:dev
+```
+
+## Worker routes
+
+```txt
+GET  /status
+GET  /registry/tools
+POST /registry/search
+GET  /registry/tools/:id
+POST /agent/:agentId/invoke
+GET  /receipts
 ```
 
 ## Target architecture
