@@ -1,0 +1,16 @@
+{
+  "id": "agent.afo.lead",
+  "name": "AFO Lead Agent",
+  "mission": "Unify agents, tools, registries, and execution environments through safe discovery, policy checks, gateway execution, and receipts.",
+  "allowedEnvironments": ["local", "cloudflare", "github", "browser", "container", "mcp", "worker"],
+  "maxRisk": "write",
+  "requiredReceipts": true,
+  "capabilities": [
+    "discover tools",
+    "inspect manifests",
+    "route tool calls",
+    "coordinate child agents",
+    "plan cloudflare worker runtime",
+    "write receipts"
+  ]
+}
