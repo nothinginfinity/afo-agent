@@ -44,25 +44,6 @@ runtime.registry.register({
   })
 });
 
-runtime.registry.register({
-  manifest: {
-    id: "cloudflare.bindings.status",
-    name: "CloudflareBindingsStatus",
-    description: "Return visible Cloudflare binding status for the AFO Worker runtime.",
-    capabilities: ["cloudflare status", "worker status", "binding status"],
-    inputSchema: z.object({}),
-    outputSchema: z.object({ d1: z.boolean(), r2: z.boolean(), durableObject: z.boolean() }),
-    permissions: ["cloudflare:read"],
-    environment: "worker",
-    risk: "read",
-    version: "0.1.0"
-  },
-  handler: async (_input, context) => {
-    const env = (context as unknown as { env?: Env }).env;
-    return { d1: Boolean(env?.AFO_DB), r2: Boolean(env?.AFO_ARTIFACTS), durableObject: Boolean(env?.AFO_AGENT_SESSION) };
-  }
-});
-
 async function readJson(request: Request) {
   try {
     return await request.json();
@@ -75,13 +56,21 @@ function notFound() {
   return Response.json({ ok: false, error: "not_found" }, { status: 404 });
 }
 
+function bindingStatus(env: Env) {
+  return {
+    d1: Boolean(env.AFO_DB),
+    r2: Boolean(env.AFO_ARTIFACTS),
+    durableObject: Boolean(env.AFO_AGENT_SESSION)
+  };
+}
+
 export default {
   async fetch(request: Request, env: Env) {
     const url = new URL(request.url);
     const lead = LeadAfoAgent.bind(runtime);
 
     if (request.method === "GET" && url.pathname === "/status") {
-      return Response.json({ ok: true, name: "afo-agent-gateway", version: "0.1.0" });
+      return Response.json({ ok: true, name: "afo-agent-gateway", version: "0.1.0", bindings: bindingStatus(env) });
     }
 
     if (request.method === "GET" && url.pathname === "/registry/tools") {
