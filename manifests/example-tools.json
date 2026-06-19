@@ -1,0 +1,41 @@
+{
+  "version": "0.1.0",
+  "tools": [
+    {
+      "id": "registry.search",
+      "name": "RegistrySearch",
+      "description": "Search tools and child agents by capability.",
+      "capabilities": ["discover tools", "search registry", "find child agents"],
+      "permissions": ["registry:read"],
+      "environment": "mcp",
+      "risk": "read"
+    },
+    {
+      "id": "cloudflare.worker.deployPlan",
+      "name": "CloudflareWorkerDeployPlan",
+      "description": "Create a Cloudflare Worker deployment plan without deploying.",
+      "capabilities": ["plan cloudflare worker", "edge worker planning"],
+      "permissions": ["cloudflare:plan"],
+      "environment": "cloudflare",
+      "risk": "read"
+    },
+    {
+      "id": "repo.readFile",
+      "name": "ReadFile",
+      "description": "Read a repository file by path.",
+      "capabilities": ["read repository files", "inspect source", "read docs"],
+      "permissions": ["repo:read"],
+      "environment": "github",
+      "risk": "read"
+    },
+    {
+      "id": "repo.writeFile",
+      "name": "WriteFile",
+      "description": "Write a repository file by path.",
+      "capabilities": ["write repository files", "create docs", "create release post"],
+      "permissions": ["repo:write"],
+      "environment": "github",
+      "risk": "write"
+    }
+  ]
+}
