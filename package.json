@@ -1,0 +1,21 @@
+{
+  "name": "@afo/agent",
+  "version": "0.1.0",
+  "description": "AFO.Agent: lead agent runtime with live tool registry, policy gateway, receipts, and Cloudflare-ready orchestration.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev:example": "tsx examples/release-blogger.ts",
+    "dev:lead": "tsx examples/lead-agent.ts"
+  },
+  "dependencies": {
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
