@@ -1,4 +1,4 @@
-import { AgentDefinition, AgentRuntime, ToolCall, ToolSearchQuery } from "./types.js";
+import { AgentDefinition, AgentRuntime, publicToolManifest, ToolCall, ToolSearchQuery } from "./types.js";
 
 export class AfoAgent {
   constructor(readonly definition: AgentDefinition, private runtime: AgentRuntime) {}
@@ -17,13 +17,13 @@ export class AfoAgent {
   }
 
   discover(query: ToolSearchQuery) {
-    return this.runtime.registry.search(query).map((tool) => tool.manifest);
+    return this.runtime.registry.search(query).map((tool) => publicToolManifest(tool.manifest));
   }
 
   inspect(toolId: string) {
     const tool = this.runtime.registry.get(toolId);
     if (!tool) throw new Error("tool_not_found");
-    return tool.manifest;
+    return publicToolManifest(tool.manifest);
   }
 
   invoke(call: ToolCall) {
