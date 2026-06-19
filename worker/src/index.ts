@@ -1,4 +1,4 @@
-import { createAfoRuntime, LeadAfoAgent, registerDefaultAfoTools } from "../../src/index.js";
+import { createAfoRuntime, LeadAfoAgent, publicToolManifest, registerDefaultAfoTools } from "../../src/index.js";
 
 export class AfoAgentSession {
   state: DurableObjectState;
@@ -51,7 +51,7 @@ export default {
     }
 
     if (request.method === "GET" && url.pathname === "/registry/tools") {
-      return Response.json({ ok: true, tools: runtime.registry.list().map((tool) => tool.manifest) });
+      return Response.json({ ok: true, tools: runtime.registry.list().map((tool) => publicToolManifest(tool.manifest)) });
     }
 
     if (request.method === "POST" && url.pathname === "/registry/search") {
