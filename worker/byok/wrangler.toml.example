@@ -1,0 +1,15 @@
+name = "afo-byok-agent-gateway"
+main = "worker/byok/index.js"
+compatibility_date = "2026-06-19"
+
+[vars]
+AFO_MCP_URL = "https://afo-agent-gateway.jaredtechfit.workers.dev/mcp"
+DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6"
+ANTHROPIC_VERSION = "2023-06-01"
+
+# Optional once Anthropic remote MCP requires/uses a beta header in your account.
+# ANTHROPIC_BETA = ""
+
+# Optional role token if you want this broker to default to read-level AFO tools.
+# Set this as a secret in production, not plaintext:
+# wrangler secret put AFO_AGENT_READ_TOKEN
