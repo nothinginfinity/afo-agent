@@ -1,0 +1,60 @@
+{
+  "tools": [
+    {
+      "id": "registry.inspect",
+      "name": "RegistryInspect",
+      "description": "Inspect one tool manifest by id.",
+      "capabilities": [
+        "inspect tool",
+        "read tool manifest",
+        "explain capability"
+      ],
+      "permissions": [
+        "registry:read"
+      ],
+      "environment": "worker",
+      "risk": "read",
+      "version": "0.1.2",
+      "inputSchema": "toolId:string",
+      "outputSchema": "tool:ToolManifest"
+    },
+    {
+      "id": "agent.invoke",
+      "name": "AgentInvoke",
+      "description": "Invoke an allowed AFO.Agent tool through the policy and receipt gateway.",
+      "capabilities": [
+        "invoke tool",
+        "run agent tool",
+        "write receipt"
+      ],
+      "permissions": [
+        "agent:invoke",
+        "receipts:write"
+      ],
+      "environment": "worker",
+      "risk": "write",
+      "version": "0.1.2",
+      "inputSchema": "toolId:string,purpose:string,input:object",
+      "outputSchema": "output:any,receipts:Receipt[]"
+    },
+    {
+      "id": "receipts.list",
+      "name": "ReceiptsList",
+      "description": "List recent AFO.Agent execution and sync receipts.",
+      "capabilities": [
+        "list receipts",
+        "audit agent activity",
+        "view ledger"
+      ],
+      "permissions": [
+        "receipts:read"
+      ],
+      "environment": "worker",
+      "risk": "read",
+      "version": "0.1.2",
+      "inputSchema": "limit?:number",
+      "outputSchema": "receipts:Receipt[]"
+    }
+  ],
+  "agents": []
+}
