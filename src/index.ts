@@ -7,3 +7,4 @@ export * from "./runtime.js";
 export * from "./agent.js";
 export * from "./lead-agent.js";
 export * from "./toolkit.js";
+export * from "./byok/index.js";
