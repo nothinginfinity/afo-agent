@@ -58,8 +58,8 @@ function normalizeManifest(raw, sourceFile) {
     const agents = Array.isArray(raw.agents) ? raw.agents : [];
     return { tools, agents, sourceFile };
   }
-  if (raw && raw.id && raw.capabilities) return { tools: [raw], agents: [], sourceFile };
   if (raw && raw.id && raw.mission) return { tools: [], agents: [raw], sourceFile };
+  if (raw && raw.id && raw.capabilities) return { tools: [raw], agents: [], sourceFile };
   throw new Error(`${sourceFile} must contain a tool object, an agent object, an array of tools, or { tools, agents }`);
 }
 
