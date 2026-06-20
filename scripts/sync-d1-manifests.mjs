@@ -118,14 +118,28 @@ async function cloudflareD1(sql, params = []) {
 async function emitInngest(name, data) {
   const key = env('INNGEST_EVENT_KEY');
   if (!key) return { skipped: true, reason: 'missing INNGEST_EVENT_KEY' };
-  const response = await fetch('https://inn.gs/e', {
-    method: 'POST',
-    headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-    body: JSON.stringify([{ name, data, id: `${syncId}-${name}` }])
-  });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(`Inngest event failed: ${JSON.stringify(result)}`);
-  return result;
+  try {
+    const response = await fetch('https://inn.gs/e', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+      body: JSON.stringify([{ name, data, id: `${syncId}-${name}` }])
+    });
+    const text = await response.text();
+    let result;
+    try {
+      result = text ? JSON.parse(text) : {};
+    } catch {
+      result = { text };
+    }
+    if (!response.ok) {
+      console.warn(JSON.stringify({ syncId, warning: 'inngest_event_failed', name, status: response.status, result }, null, 2));
+      return { skipped: true, reason: 'inngest_event_failed', status: response.status, result };
+    }
+    return result;
+  } catch (error) {
+    console.warn(JSON.stringify({ syncId, warning: 'inngest_event_exception', name, error: error.message }, null, 2));
+    return { skipped: true, reason: 'inngest_event_exception', error: error.message };
+  }
 }
 
 async function syncTool(tool) {
@@ -176,7 +190,7 @@ async function main() {
 
 main().catch(async (error) => {
   const failure = { syncId, dryRun, error: error.message };
-  try { await emitInngest('afo.agent.manifest_sync.failed', failure); } catch {}
+  await emitInngest('afo.agent.manifest_sync.failed', failure);
   console.error(JSON.stringify(failure, null, 2));
   process.exit(1);
 });
