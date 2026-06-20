@@ -6,10 +6,11 @@ on:
     branches: [main]
     paths:
       - 'manifests/**'
-      - 'schemas/**'
+      - 'scripts/sync-d1-manifests.mjs'
+      - '.github/workflows/sync-d1-manifests.yml'
 
 jobs:
-  sync:
+  validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,4 +19,21 @@ jobs:
           node-version: 22
       - run: npm install
       - run: npm run build
-      - run: echo "D1 manifest sync placeholder. Wire Cloudflare API token and migration script next."
+      - run: npm run manifests:validate
+
+  sync:
+    needs: validate
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: npm run manifests:sync
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          AFO_AGENT_D1_DATABASE_ID: ${{ secrets.AFO_AGENT_D1_DATABASE_ID }}
+          INNGEST_EVENT_KEY: ${{ secrets.INNGEST_EVENT_KEY }}
