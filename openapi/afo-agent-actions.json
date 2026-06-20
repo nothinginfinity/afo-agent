@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "AFO.Agent Gateway",
-    "version": "0.1.2",
+    "version": "0.3.0",
     "description": "OpenAPI fallback schema for ChatGPT Actions."
   },
   "servers": [
@@ -137,6 +137,116 @@
           },
           "401": {
             "description": "Admin token required"
+          }
+        }
+      }
+    },
+    "/orchestrator/plan": {
+      "post": {
+        "operationId": "orchestratorPlan",
+        "summary": "Interpret a task and propose a tool without invoking anything",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "task": {
+                    "type": "string"
+                  },
+                  "riskMax": {
+                    "type": "string"
+                  },
+                  "environment": {
+                    "type": "string"
+                  },
+                  "requiredRole": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "task"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Plan result"
+          }
+        }
+      }
+    },
+    "/orchestrator/route": {
+      "post": {
+        "operationId": "orchestratorRoute",
+        "summary": "Resolve a task to one fully inspected candidate tool",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "task": {
+                    "type": "string"
+                  },
+                  "toolId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "task"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Route result"
+          }
+        }
+      }
+    },
+    "/orchestrator/execute": {
+      "post": {
+        "operationId": "orchestratorExecute",
+        "summary": "Plan a task, then execute it directly or create a pending approval",
+        "security": [
+          {
+            "AFOAdminToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "task": {
+                    "type": "string"
+                  },
+                  "input": {
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "task"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Execute result"
+          },
+          "401": {
+            "description": "Operator token required"
           }
         }
       }
