@@ -1,0 +1,186 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "AFO.Agent Gateway",
+    "version": "0.1.2",
+    "description": "OpenAPI fallback schema for ChatGPT Actions."
+  },
+  "servers": [
+    {
+      "url": "https://afo-agent-gateway.jaredtechfit.workers.dev"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "AFOAdminToken": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  },
+  "paths": {
+    "/status": {
+      "get": {
+        "operationId": "getStatus",
+        "summary": "Get AFO.Agent status",
+        "responses": {
+          "200": {
+            "description": "Status"
+          }
+        }
+      }
+    },
+    "/registry/tools": {
+      "get": {
+        "operationId": "listTools",
+        "summary": "List tool manifests",
+        "responses": {
+          "200": {
+            "description": "Tools"
+          }
+        }
+      }
+    },
+    "/registry/search": {
+      "post": {
+        "operationId": "searchRegistry",
+        "summary": "Search tools by capability",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "capability": {
+                    "type": "string"
+                  },
+                  "riskMax": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "capability"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Search results"
+          }
+        }
+      }
+    },
+    "/registry/tools/{toolId}": {
+      "get": {
+        "operationId": "inspectTool",
+        "summary": "Inspect a tool manifest",
+        "parameters": [
+          {
+            "name": "toolId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tool manifest"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/agent/agent.afo.lead/invoke": {
+      "post": {
+        "operationId": "invokeLeadAgent",
+        "summary": "Invoke a tool through AFO.Agent",
+        "security": [
+          {
+            "AFOAdminToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "toolId": {
+                    "type": "string"
+                  },
+                  "purpose": {
+                    "type": "string"
+                  },
+                  "input": {
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "toolId",
+                  "purpose"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Invocation result"
+          },
+          "401": {
+            "description": "Admin token required"
+          }
+        }
+      }
+    },
+    "/receipts": {
+      "get": {
+        "operationId": "listReceipts",
+        "summary": "List recent receipts",
+        "responses": {
+          "200": {
+            "description": "Receipts"
+          }
+        }
+      }
+    },
+    "/mcp": {
+      "get": {
+        "operationId": "getMcpInfo",
+        "summary": "Get MCP server information",
+        "responses": {
+          "200": {
+            "description": "MCP capabilities"
+          }
+        }
+      },
+      "post": {
+        "operationId": "mcpRpc",
+        "summary": "JSON-RPC MCP endpoint",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "MCP JSON-RPC response"
+          }
+        }
+      }
+    }
+  }
+}
