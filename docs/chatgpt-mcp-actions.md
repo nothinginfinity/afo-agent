@@ -19,6 +19,11 @@ agent.invoke
 receipts.list
 ```
 
+The full live tool list is longer than this (GitHub/Cloudflare inspectors,
+approvals, and the `orchestrator.*` routing tools) — call `GET /mcp` or
+`GET /registry/tools` for the current set, or see
+[`docs/orchestrator.md`](orchestrator.md) for the orchestrator layer specifically.
+
 ## OpenAPI fallback
 
 The OpenAPI schema is committed at:
