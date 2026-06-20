@@ -1,0 +1,21 @@
+name: sync-d1-manifests
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'manifests/**'
+      - 'schemas/**'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: npm run build
+      - run: echo "D1 manifest sync placeholder. Wire Cloudflare API token and migration script next."
