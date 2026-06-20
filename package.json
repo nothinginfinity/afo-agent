@@ -1,16 +1,16 @@
 {
   "name": "@afo/agent",
-  "version": "0.1.0",
-  "description": "AFO.Agent: lead agent runtime with live tool registry, policy gateway, receipts, and Cloudflare-ready orchestration.",
+  "version": "0.1.1",
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "private": true,
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev:example": "tsx examples/release-blogger.ts",
     "dev:lead": "tsx examples/lead-agent.ts",
     "worker:dev": "wrangler dev",
-    "worker:deploy": "wrangler deploy"
+    "worker:deploy": "wrangler deploy",
+    "manifests:validate": "node scripts/sync-d1-manifests.mjs --dry-run",
+    "manifests:sync": "node scripts/sync-d1-manifests.mjs --require-secrets"
   },
   "dependencies": {
     "zod": "^3.23.8"
@@ -20,6 +20,6 @@
     "@types/node": "^22.10.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "wrangler": "^4.0.0"
+    "wrangler": "^4.20.0"
   }
 }
