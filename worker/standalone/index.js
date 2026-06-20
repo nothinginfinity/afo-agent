@@ -1,4 +1,4 @@
-const VERSION='0.2.0';
+const VERSION='0.3.0';
 const riskRank={read:1,network:2,write:3,money:4,destructive:5};
 const roleRank={public:0,read:1,operator:2,admin:3,owner:4};
 const leadAgent={id:'agent.afo.lead',name:'AFO Lead Agent',mission:'Safe tool discovery, policy checks, approval gates, execution, and receipts.',allowedEnvironments:['local','cloudflare','github','browser','container','mcp','worker'],maxRisk:'write',requiredReceipts:true};
@@ -18,7 +18,11 @@ const tools=[
 {id:'approvals.decide',name:'ApprovalsDecide',description:'Approve or reject a pending approval record.',capabilities:['approve action','reject action','human approval'],permissions:['approvals:decide'],environment:'worker',risk:'write',version:VERSION,inputSchema:'approvalId:string,decision:approved|rejected,reason:string',outputSchema:'approval object',requiredRole:'owner'},
 {id:'cloudflare.worker.deployPlan',name:'CloudflareWorkerDeployPlan',description:'Create a safe deployment plan for a Cloudflare Worker without deploying it.',capabilities:['plan cloudflare worker','edge worker planning','deployment planning'],permissions:['cloudflare:plan'],environment:'cloudflare',risk:'read',version:VERSION,inputSchema:'workerName:string,purpose:string',outputSchema:'workerName:string,steps:string[]',requiredRole:'public'},
 {id:'cloudflare.worker.deployApply',name:'CloudflareWorkerDeployApply',description:'Approval-gated write scaffold for a future Cloudflare Worker deploy apply action.',capabilities:['apply cloudflare worker deploy','approval gated deploy','write worker deployment'],permissions:['cloudflare:write','approvals:required'],environment:'cloudflare',risk:'write',version:VERSION,inputSchema:'approvalId:string,workerName:string,sourceRef?:string',outputSchema:'deployment status object',requiredRole:'operator',requiresApproval:true},
-{id:'afo.agent.status',name:'AfoAgentStatus',description:'Return AFO.Agent gateway status and runtime shape.',capabilities:['agent status','gateway status','health check'],permissions:['agent:read'],environment:'worker',risk:'read',version:VERSION,inputSchema:'{}',outputSchema:'status object',requiredRole:'public'}
+{id:'afo.agent.status',name:'AfoAgentStatus',description:'Return AFO.Agent gateway status and runtime shape.',capabilities:['agent status','gateway status','health check'],permissions:['agent:read'],environment:'worker',risk:'read',version:VERSION,inputSchema:'{}',outputSchema:'status object',requiredRole:'public'},
+{id:'orchestrator.plan',name:'OrchestratorPlan',description:'Interpret a natural language task into a capability, rank candidate tools from the live registry, and propose a tool without invoking anything.',capabilities:['plan task execution','interpret natural language task','propose tool selection','assess approval requirement'],permissions:['registry:read'],environment:'worker',risk:'read',version:VERSION,inputSchema:'task:string,riskMax?:ToolRisk,environment?:string,requiredRole?:string,requireApproval?:boolean,dryRun?:boolean',outputSchema:'capability:string,candidates:RankedCandidate[],selected:ToolSummary|null,riskSummary:object|null,approvalRequired:boolean,proposedNextAction:string',requiredRole:'public'},
+{id:'orchestrator.route',name:'OrchestratorRoute',description:'Resolve a task, or an explicit toolId, to one fully inspected candidate tool plus its policy evaluation, without invoking it.',capabilities:['resolve task to tool','lock candidate tool','inspect selected tool','evaluate routing policy'],permissions:['registry:read'],environment:'worker',risk:'read',version:VERSION,inputSchema:'task:string,toolId?:string,riskMax?:ToolRisk,environment?:string,requiredRole?:string',outputSchema:'capability:string,candidatesConsidered:RankedCandidate[],selected:ToolManifest|null,approvalRequired:boolean,locked:boolean,proposedNextAction:string',requiredRole:'public'},
+{id:'orchestrator.execute',name:'OrchestratorExecute',description:'Plan a task, then either invoke the selected tool directly when safe, or create a pending approval when the tool is write, money, destructive, or role-restricted for the caller.',capabilities:['execute planned task','route to approval when gated','invoke selected tool','write orchestrator receipt'],permissions:['agent:invoke','receipts:write','approvals:write'],environment:'worker',risk:'write',version:VERSION,inputSchema:'task:string,input?:object,riskMax?:ToolRisk,environment?:string,requiredRole?:string',outputSchema:'executed:boolean,approvalRequired:boolean,result?:any,approval?:object,reason?:string,selectedTool?:string',requiredRole:'operator'},
+{id:'orchestrator.explain',name:'OrchestratorExplain',description:'Look up receipts for a requestId and return a human readable explanation of what an orchestrator run decided and why.',capabilities:['explain orchestrator run','summarize receipt','audit decision reason'],permissions:['receipts:read'],environment:'worker',risk:'read',version:VERSION,inputSchema:'requestId:string',outputSchema:'found:boolean,receipts:Receipt[],summary:string',requiredRole:'operator'}
 ];
 const mcpTools=tools.map(t=>({name:t.id,description:t.description,inputSchema:inputSchemaFor(t.id)}));
 function inputSchemaFor(name){const schemas={
@@ -37,7 +41,11 @@ function inputSchemaFor(name){const schemas={
 'approvals.decide':{type:'object',properties:{approvalId:{type:'string'},decision:{type:'string',enum:['approved','rejected']},reason:{type:'string'}},required:['approvalId','decision']},
 'cloudflare.worker.deployPlan':{type:'object',properties:{workerName:{type:'string'},purpose:{type:'string'}},required:['workerName']},
 'cloudflare.worker.deployApply':{type:'object',properties:{approvalId:{type:'string'},workerName:{type:'string'},sourceRef:{type:'string'}},required:['approvalId','workerName']},
-'afo.agent.status':{type:'object',properties:{},required:[]}
+'afo.agent.status':{type:'object',properties:{},required:[]},
+'orchestrator.plan':{type:'object',properties:{task:{type:'string'},riskMax:{type:'string',enum:['read','network','write','money','destructive']},environment:{type:'string'},requiredRole:{type:'string'},requireApproval:{type:'boolean'},dryRun:{type:'boolean'}},required:['task']},
+'orchestrator.route':{type:'object',properties:{task:{type:'string'},toolId:{type:'string'},riskMax:{type:'string',enum:['read','network','write','money','destructive']},environment:{type:'string'},requiredRole:{type:'string'}},required:['task']},
+'orchestrator.execute':{type:'object',properties:{task:{type:'string'},input:{type:'object'},riskMax:{type:'string',enum:['read','network','write','money','destructive']},environment:{type:'string'},requiredRole:{type:'string'}},required:['task']},
+'orchestrator.explain':{type:'object',properties:{requestId:{type:'string'}},required:['requestId']}
 };return schemas[name]||{type:'object',properties:{},required:[]}}
 function cors(){return{'access-control-allow-origin':'*','access-control-allow-methods':'GET,POST,OPTIONS','access-control-allow-headers':'content-type,authorization,x-afo-token,x-afo-role'}}
 function json(data,init={}){return new Response(JSON.stringify(data,null,2),{...init,headers:{'content-type':'application/json; charset=utf-8',...cors(),...(init.headers||{})}})}
@@ -53,7 +61,7 @@ async function dbTools(env){if(!env.AFO_DB)return tools;try{const res=await env.
 async function dbReceipts(env,limit=50){if(!env.AFO_DB)return[];try{const safeLimit=safeInt(limit);const res=await env.AFO_DB.prepare('SELECT * FROM receipts ORDER BY created_at DESC LIMIT ?').bind(safeLimit).all();return res.results||[]}catch{return[]}}
 async function writeReceipt(env,item){const receipt={id:crypto.randomUUID(),requestId:item.requestId||crypto.randomUUID(),agentId:item.agentId||leadAgent.id,toolId:item.toolId,purpose:item.purpose||'',status:item.status,reason:item.reason||null,role:item.role||null,input:item.input??null,output:item.output??null,error:item.error||null,createdAt:new Date().toISOString()};if(env.AFO_DB){await env.AFO_DB.prepare('INSERT INTO receipts (id,request_id,agent_id,tool_id,purpose,status,reason,input_json,output_json,error,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)').bind(receipt.id,receipt.requestId,receipt.agentId,receipt.toolId,receipt.purpose,receipt.status,receipt.reason,JSON.stringify(receipt.input),JSON.stringify(receipt.output),receipt.error,receipt.createdAt).run()}if(env.AFO_ARTIFACTS){await env.AFO_ARTIFACTS.put(`receipts/${receipt.createdAt.slice(0,10)}/${receipt.id}.json`,JSON.stringify(receipt,null,2),{httpMetadata:{contentType:'application/json'}})}return receipt}
 function searchTools(toolList,query={}){const capability=String(query.capability||'').toLowerCase();const riskMax=query.riskMax;return toolList.filter(t=>{const cap=!capability||t.name.toLowerCase().includes(capability)||t.description.toLowerCase().includes(capability)||(t.capabilities||[]).some(c=>c.toLowerCase().includes(capability));const risk=!riskMax||riskRank[t.risk]<=riskRank[riskMax];return cap&&risk})}
-function status(env){return{ok:true,name:'afo-agent-gateway',version:env.AFO_AGENT_VERSION||VERSION,leadAgent,bindings:{d1:Boolean(env.AFO_DB),r2:Boolean(env.AFO_ARTIFACTS),githubToken:Boolean(env.GITHUB_TOKEN),cfToken:Boolean(env.CF_API_TOKEN),cfAccount:Boolean(env.CF_ACCOUNT_ID),readToken:Boolean(env.AFO_AGENT_READ_TOKEN),operatorToken:Boolean(env.AFO_AGENT_OPERATOR_TOKEN),ownerToken:Boolean(env.AFO_AGENT_OWNER_TOKEN),adminToken:Boolean(env.AFO_AGENT_ADMIN_TOKEN)},routes:['/status','/registry/tools','/registry/search','/registry/tools/:id','/agent/agent.afo.lead/invoke','/receipts','/approvals','/mcp','/openapi.json'],persistence:'d1+r2',hardened:true,auth:'role tokens',approvalGates:true,source:'github:worker/standalone/index.js'}}
+function status(env){return{ok:true,name:'afo-agent-gateway',version:env.AFO_AGENT_VERSION||VERSION,leadAgent,bindings:{d1:Boolean(env.AFO_DB),r2:Boolean(env.AFO_ARTIFACTS),githubToken:Boolean(env.GITHUB_TOKEN),cfToken:Boolean(env.CF_API_TOKEN),cfAccount:Boolean(env.CF_ACCOUNT_ID),readToken:Boolean(env.AFO_AGENT_READ_TOKEN),operatorToken:Boolean(env.AFO_AGENT_OPERATOR_TOKEN),ownerToken:Boolean(env.AFO_AGENT_OWNER_TOKEN),adminToken:Boolean(env.AFO_AGENT_ADMIN_TOKEN)},routes:['/status','/registry/tools','/registry/search','/registry/tools/:id','/agent/agent.afo.lead/invoke','/orchestrator/plan','/orchestrator/route','/orchestrator/execute','/receipts','/approvals','/mcp','/openapi.json'],persistence:'d1+r2',hardened:true,auth:'role tokens',approvalGates:true,source:'github:worker/standalone/index.js'}}
 async function gh(env,path){if(!env.GITHUB_TOKEN)throw new Error('github_token_missing');const res=await fetch(`https://api.github.com${path}`,{headers:{authorization:`Bearer ${env.GITHUB_TOKEN}`,'user-agent':'afo-agent-gateway','accept':'application/vnd.github+json'}});const text=await res.text();let data;try{data=JSON.parse(text)}catch{data={text}}if(!res.ok)throw new Error(`github_${res.status}:${data.message||text.slice(0,120)}`);return data}
 async function cf(env,path){if(!env.CF_API_TOKEN)throw new Error('cf_api_token_missing');const account=env.CF_ACCOUNT_ID;if(!account)throw new Error('cf_account_id_missing');const full=path.replaceAll('{account_id}',account);const res=await fetch(`https://api.cloudflare.com/client/v4${full}`,{headers:{authorization:`Bearer ${env.CF_API_TOKEN}`,'content-type':'application/json'}});const data=await res.json().catch(()=>({}));if(!res.ok||data.success===false)throw new Error(`cloudflare_${res.status}:${JSON.stringify(data.errors||data)}`);return data}
 async function approvalsTableReady(env){if(!env.AFO_DB)return false;try{await env.AFO_DB.prepare('SELECT id FROM approvals LIMIT 1').all();return true}catch{return false}}
@@ -61,6 +69,147 @@ async function createApproval(env,args,role){const now=new Date().toISOString();
 async function listApprovals(env,args){if(!env.AFO_DB)throw new Error('d1_missing');if(!(await approvalsTableReady(env)))return[];const limit=safeInt(args.limit,25,100);if(args.status){const res=await env.AFO_DB.prepare('SELECT * FROM approvals WHERE status=? ORDER BY created_at DESC LIMIT ?').bind(args.status,limit).all();return res.results||[]}const res=await env.AFO_DB.prepare('SELECT * FROM approvals ORDER BY created_at DESC LIMIT ?').bind(limit).all();return res.results||[]}
 async function decideApproval(env,args,role){if(!env.AFO_DB)throw new Error('d1_missing');if(!(await approvalsTableReady(env)))throw new Error('approvals_table_missing');const decision=args.decision==='approved'?'approved':'rejected';const now=new Date().toISOString();await env.AFO_DB.prepare('UPDATE approvals SET status=?,decided_by=?,decision_reason=?,decided_at=? WHERE id=? AND status="pending"').bind(decision,role,args.reason||'',now,args.approvalId).run();const res=await env.AFO_DB.prepare('SELECT * FROM approvals WHERE id=?').bind(args.approvalId).first();if(!res)throw new Error('approval_not_found');return res}
 async function requireApproved(env,approvalId,toolId){if(!env.AFO_DB)throw new Error('d1_missing');if(!(await approvalsTableReady(env)))throw new Error('approvals_table_missing');const row=await env.AFO_DB.prepare('SELECT * FROM approvals WHERE id=?').bind(approvalId).first();if(!row)throw new Error('approval_not_found');if(row.tool_id!==toolId)throw new Error('approval_tool_mismatch');if(row.status!=='approved')throw new Error('approval_not_approved');return row}
+const ORCH_STOPWORDS=new Set(['the','a','an','to','of','for','and','or','please','can','you','i','we','need','want','this','that','on','in','with','my','our','it','is','are','be','me','let','lets',"let's",'do','does','via','using','use','should','would','could','just','now','up']);
+function extractCapability(task){
+  const cleaned=String(task||'').toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/).filter(w=>w&&!ORCH_STOPWORDS.has(w));
+  return cleaned.join(' ');
+}
+function significantWords(capability){return String(capability||'').split(/\s+/).filter(Boolean)}
+function searchCandidates(toolList,capability,riskMax){
+  const words=significantWords(capability);
+  const phraseMatches=capability?searchTools(toolList,{capability,riskMax}):[];
+  const hitCounts=new Map();
+  for(const t of phraseMatches)hitCounts.set(t.id,words.length||1);
+  const byId=new Map(phraseMatches.map(t=>[t.id,t]));
+  if(words.length>1||!byId.size){
+    for(const w of words){
+      for(const t of searchTools(toolList,{capability:w,riskMax})){
+        byId.set(t.id,t);
+        hitCounts.set(t.id,(hitCounts.get(t.id)||0)+1);
+      }
+    }
+  }
+  return [...byId.values()].map(tool=>({tool,keywordHits:hitCounts.get(tool.id)||0,totalKeywords:words.length||1}));
+}
+function rankCandidates(candidates,ctx={}){
+  const {environment,requiredRole,role}=ctx;
+  const scored=candidates.map(c=>{
+    const tool=c.tool;const reasons=[];let score=0;
+    const ratio=c.totalKeywords?c.keywordHits/c.totalKeywords:0;
+    if(ratio>=1){score+=5;reasons.push('matched all extracted capability keywords')}
+    else if(ratio>0){score+=2+Math.round(ratio*2);reasons.push(`matched ${c.keywordHits}/${c.totalKeywords} capability keywords`)}
+    else{score+=1;reasons.push('weak capability match (substring relevance only)')}
+    score+=5-(riskRank[tool.risk]||3);reasons.push(`risk tier: ${tool.risk}`);
+    const roleOk=role?hasRole(role,tool.requiredRole||'public'):true;
+    if(roleOk){score+=2;reasons.push(`caller role satisfies requiredRole ${tool.requiredRole||'public'}`)}
+    else{reasons.push(`caller role does not satisfy requiredRole ${tool.requiredRole||'public'} (would require approval)`)}
+    if(environment){if(tool.environment===environment){score+=2;reasons.push('environment matches constraint')}else{score-=1;reasons.push('environment differs from constraint')}}
+    if(requiredRole&&tool.requiredRole===requiredRole){score+=1;reasons.push('requiredRole matches constraint')}
+    const complete=Boolean(tool.description&&tool.capabilities?.length&&tool.inputSchema&&tool.outputSchema&&tool.version);
+    if(complete){score+=1;reasons.push('manifest is complete')}else{reasons.push('manifest is missing recommended fields')}
+    if(tool.requiresApproval){score-=1;reasons.push('manifest flags requiresApproval')}else{reasons.push('no explicit requiresApproval flag')}
+    return{tool,score,reasons,roleOk};
+  });
+  scored.sort((a,b)=>b.score-a.score);
+  return scored;
+}
+function approvalRequiredFor(tool,role){
+  if(!tool)return false;
+  if(tool.requiresApproval===true)return true;
+  if(riskRank[tool.risk]>=riskRank.write)return true;
+  if(!hasRole(role,tool.requiredRole||'public'))return true;
+  return false;
+}
+async function planOrchestration(env,role,args){
+  const task=String(args?.task||'').trim();
+  if(!task)throw new Error('task_required');
+  const capability=extractCapability(task);
+  const toolList=await dbTools(env);
+  const candidates=searchCandidates(toolList,capability,args?.riskMax);
+  const ranked=rankCandidates(candidates,{environment:args?.environment,requiredRole:args?.requiredRole,role});
+  const top=ranked[0]||null;
+  const selected=top?top.tool:null;
+  const approvalRequired=approvalRequiredFor(selected,role);
+  const riskSummary=selected?{risk:selected.risk,requiredRole:selected.requiredRole||'public',roleSatisfied:hasRole(role,selected.requiredRole||'public'),withinLeadMaxRisk:riskRank[selected.risk]<=riskRank[leadAgent.maxRisk],requiresApprovalFlag:Boolean(selected.requiresApproval)}:null;
+  const proposedNextAction=!selected?'no_matching_tool: refine the task description or call registry.search directly':approvalRequired?`call orchestrator.execute, or approvals.request, for "${selected.id}" (approval required)`:`call orchestrator.execute to run "${selected.id}" directly`;
+  return{
+    task,capability,
+    constraints:{riskMax:args?.riskMax||null,environment:args?.environment||null,requiredRole:args?.requiredRole||null,requireApproval:Boolean(args?.requireApproval),dryRun:args?.dryRun!==false},
+    candidates:ranked.slice(0,5).map(r=>({toolId:r.tool.id,risk:r.tool.risk,requiredRole:r.tool.requiredRole||'public',environment:r.tool.environment,score:r.score,reasons:r.reasons})),
+    selected:selected?{toolId:selected.id,name:selected.name,description:selected.description,risk:selected.risk,requiredRole:selected.requiredRole||'public',environment:selected.environment,requiresApproval:Boolean(selected.requiresApproval)}:null,
+    riskSummary,approvalRequired,proposedNextAction
+  };
+}
+async function routeOrchestration(env,role,args){
+  const plan=await planOrchestration(env,role,args);
+  const toolList=await dbTools(env);
+  let selectedTool=null;
+  if(args?.toolId){
+    selectedTool=toolList.find(t=>t.id===args.toolId)||null;
+    if(!selectedTool)throw new Error('tool_not_found');
+  }else if(plan.selected){
+    selectedTool=toolList.find(t=>t.id===plan.selected.toolId)||null;
+  }
+  const approvalRequired=approvalRequiredFor(selectedTool,role);
+  return{
+    task:plan.task,capability:plan.capability,constraints:plan.constraints,
+    candidatesConsidered:plan.candidates,
+    selected:selectedTool,
+    approvalRequired,
+    locked:Boolean(selectedTool),
+    proposedNextAction:selectedTool?(approvalRequired?`call orchestrator.execute, or approvals.request, for "${selectedTool.id}"`:`call orchestrator.execute to run "${selectedTool.id}"`):'no_tool_selected'
+  };
+}
+async function executeOrchestration(env,role,args){
+  const task=String(args?.task||'').trim();
+  if(!task)throw new Error('task_required');
+  let plan;
+  try{plan=await planOrchestration(env,role,args)}catch(e){return{executed:false,approvalRequired:false,reason:`plan_failed:${e.message||e}`}}
+  const toolList=await dbTools(env);
+  const selected=plan.selected?toolList.find(t=>t.id===plan.selected.toolId):null;
+  if(!selected){
+    return{executed:false,approvalRequired:false,reason:'no_matching_tool',capability:plan.capability,candidates:plan.candidates,proposedNextAction:plan.proposedNextAction};
+  }
+  const approvalRequired=approvalRequiredFor(selected,role);
+  if(approvalRequired){
+    try{
+      const approval=await createApproval(env,{toolId:selected.id,purpose:task,input:args?.input||{}},role);
+      return{executed:false,approvalRequired:true,approval,selectedTool:selected.id,capability:plan.capability,candidates:plan.candidates,reason:`gated:${selected.risk}/${selected.requiredRole||'public'}`};
+    }catch(e){
+      return{executed:false,approvalRequired:true,approval:null,selectedTool:selected.id,capability:plan.capability,candidates:plan.candidates,reason:`approval_request_failed:${e.message||e}`};
+    }
+  }
+  try{
+    const result=await invokeTool(env,{toolId:selected.id,purpose:task,input:args?.input||{}},role);
+    return{executed:true,approvalRequired:false,selectedTool:selected.id,capability:plan.capability,candidates:plan.candidates,result:result.output,innerReceiptId:result.receipt?.id||null};
+  }catch(e){
+    return{executed:false,approvalRequired:false,selectedTool:selected.id,capability:plan.capability,candidates:plan.candidates,reason:`execute_failed:${e.message||e}`};
+  }
+}
+function safeParseJson(v){if(v==null)return null;if(typeof v!=='string')return v;try{return JSON.parse(v)}catch{return v}}
+async function dbReceiptsByRequestId(env,requestId){
+  if(!env.AFO_DB)return[];
+  try{
+    const res=await env.AFO_DB.prepare('SELECT * FROM receipts WHERE request_id=? ORDER BY created_at DESC LIMIT 25').bind(requestId).all();
+    return res.results||[];
+  }catch{return[]}
+}
+async function explainOrchestration(env,args){
+  const requestId=String(args?.requestId||'').trim();
+  if(!requestId)throw new Error('requestId_required');
+  const rows=await dbReceiptsByRequestId(env,requestId);
+  if(!rows.length)return{requestId,found:false,receipts:[],summary:'No receipts found for this requestId.'};
+  const parsed=rows.map(r=>({...r,input:safeParseJson(r.input_json),output:safeParseJson(r.output_json)}));
+  const top=parsed.find(r=>String(r.tool_id||'').startsWith('orchestrator.'))||parsed[0];
+  const lines=[];
+  lines.push(`Request ${requestId} ran tool "${top.tool_id}" with role "${top.role}".`);
+  if(top.output?.capability)lines.push(`Interpreted capability: "${top.output.capability}".`);
+  if(top.output?.selectedTool)lines.push(`Selected tool: ${top.output.selectedTool}.`);
+  else if(top.output?.selected)lines.push(`Selected tool: ${typeof top.output.selected==='string'?top.output.selected:top.output.selected.toolId||JSON.stringify(top.output.selected)}.`);
+  lines.push(`Status: ${top.status}${top.reason?` (${top.reason})`:''}${top.error?` — error: ${top.error}`:''}.`);
+  if(top.output?.approval)lines.push(`Approval id: ${top.output.approval.id||'unknown'}, status: ${top.output.approval.status||'unknown'}.`);
+  return{requestId,found:true,receipts:parsed,summary:lines.join(' ')};
+}
 async function invokeTool(env,call,role){const requestId=crypto.randomUUID();const toolList=await dbTools(env);const tool=toolList.find(t=>t.id===call.toolId);if(!tool){await writeReceipt(env,{requestId,toolId:call.toolId,purpose:call.purpose||'',status:'failed',role,input:call.input,error:'tool_not_found'});throw new Error('tool_not_found')}if(!hasRole(role,tool.requiredRole||'public')){await writeReceipt(env,{requestId,toolId:call.toolId,purpose:call.purpose||'',status:'denied',role,input:call.input,error:'role_denied'});throw new Error(`role_denied:${tool.requiredRole||'public'}`)}if(!call.purpose||String(call.purpose).trim().length<3){await writeReceipt(env,{requestId,toolId:call.toolId,purpose:call.purpose||'',status:'denied',role,input:call.input,error:'purpose_required'});throw new Error('purpose_required')}if(riskRank[tool.risk]>riskRank[leadAgent.maxRisk]){await writeReceipt(env,{requestId,toolId:call.toolId,purpose:call.purpose,status:'denied',role,input:call.input,error:'risk_denied'});throw new Error('risk_denied')}let output;const input=call.input||{};
 if(tool.id==='registry.search')output={matches:searchTools(toolList,input)};
 else if(tool.id==='registry.inspect'){const found=toolList.find(t=>t.id===input.toolId);if(!found)throw new Error('tool_not_found');output={tool:found}}
@@ -77,8 +226,25 @@ else if(tool.id==='approvals.list')output={approvals:await listApprovals(env,inp
 else if(tool.id==='approvals.decide')output={approval:await decideApproval(env,input,role)};
 else if(tool.id==='cloudflare.worker.deployPlan'){const workerName=input.workerName||'afo-agent-gateway';output={workerName,steps:['inspect current worker bindings','read GitHub source ref','create approval request for deployApply','verify approval status','deploy with preserve-bindings transport only','smoke test status, registry, mcp, receipts','write D1 and R2 receipts']}}
 else if(tool.id==='cloudflare.worker.deployApply'){await requireApproved(env,input.approvalId,tool.id);output={status:'approved_but_not_executed',reason:'deployApply is a safety scaffold; use the Cloudflare preserve-bindings MCP for actual deployment.',workerName:input.workerName,sourceRef:input.sourceRef||null}}
+else if(tool.id==='orchestrator.plan')output=await planOrchestration(env,role,input);
+else if(tool.id==='orchestrator.route')output=await routeOrchestration(env,role,input);
+else if(tool.id==='orchestrator.execute')output=await executeOrchestration(env,role,input);
+else if(tool.id==='orchestrator.explain')output=await explainOrchestration(env,input);
 else throw new Error('handler_not_found');
 const receipt=await writeReceipt(env,{requestId,toolId:tool.id,purpose:call.purpose,status:'executed',role,input,output});return{output,receipt}}
-function openApiSchema(){return{openapi:'3.1.0',info:{title:'AFO.Agent Gateway',version:VERSION,description:'Role-gated AFO.Agent gateway for ChatGPT Actions and MCP.'},servers:[{url:'https://afo-agent-gateway.jaredtechfit.workers.dev'}],components:{securitySchemes:{AFOBearer:{type:'http',scheme:'bearer'}}},paths:{'/status':{get:{operationId:'getStatus',summary:'Get status',responses:{'200':{description:'Status'}}}},'/registry/search':{post:{operationId:'searchRegistry',summary:'Search tools',requestBody:{required:true,content:{'application/json':{schema:inputSchemaFor('registry.search')}}},responses:{'200':{description:'Search results'}}}},'/registry/tools/{toolId}':{get:{operationId:'inspectTool',summary:'Inspect tool',parameters:[{name:'toolId',in:'path',required:true,schema:{type:'string'}}],responses:{'200':{description:'Tool manifest'}}}},'/agent/agent.afo.lead/invoke':{post:{operationId:'invokeLeadAgent',summary:'Invoke a role-gated tool',security:[{AFOBearer:[]}],requestBody:{required:true,content:{'application/json':{schema:inputSchemaFor('agent.invoke')}}},responses:{'200':{description:'Invocation result'},'401':{description:'Role token required'}}}},'/receipts':{get:{operationId:'listReceipts',summary:'List receipts',security:[{AFOBearer:[]}],responses:{'200':{description:'Receipts'}}}},'/mcp':{get:{operationId:'getMcpInfo',summary:'Get MCP information',responses:{'200':{description:'MCP capabilities'}}},post:{operationId:'mcpRpc',summary:'JSON-RPC MCP endpoint',responses:{'200':{description:'MCP JSON-RPC response'}}}}}}}
+function openApiSchema(){return{openapi:'3.1.0',info:{title:'AFO.Agent Gateway',version:VERSION,description:'Role-gated AFO.Agent gateway for ChatGPT Actions and MCP.'},servers:[{url:'https://afo-agent-gateway.jaredtechfit.workers.dev'}],components:{securitySchemes:{AFOBearer:{type:'http',scheme:'bearer'}}},paths:{'/status':{get:{operationId:'getStatus',summary:'Get status',responses:{'200':{description:'Status'}}}},'/registry/search':{post:{operationId:'searchRegistry',summary:'Search tools',requestBody:{required:true,content:{'application/json':{schema:inputSchemaFor('registry.search')}}},responses:{'200':{description:'Search results'}}}},'/registry/tools/{toolId}':{get:{operationId:'inspectTool',summary:'Inspect tool',parameters:[{name:'toolId',in:'path',required:true,schema:{type:'string'}}],responses:{'200':{description:'Tool manifest'}}}},'/agent/agent.afo.lead/invoke':{post:{operationId:'invokeLeadAgent',summary:'Invoke a role-gated tool',security:[{AFOBearer:[]}],requestBody:{required:true,content:{'application/json':{schema:inputSchemaFor('agent.invoke')}}},responses:{'200':{description:'Invocation result'},'401':{description:'Role token required'}}}},'/orchestrator/plan':{post:{operationId:'orchestratorPlan',summary:'Plan a task without invoking anything',requestBody:{required:true,content:{'application/json':{schema:inputSchemaFor('orchestrator.plan')}}},responses:{'200':{description:'Plan result'}}}},'/orchestrator/route':{post:{operationId:'orchestratorRoute',summary:'Resolve a task to one inspected candidate tool',requestBody:{required:true,content:{'application/json':{schema:inputSchemaFor('orchestrator.route')}}},responses:{'200':{description:'Route result'}}}},'/orchestrator/execute':{post:{operationId:'orchestratorExecute',summary:'Plan, then execute or request approval',security:[{AFOBearer:[]}],requestBody:{required:true,content:{'application/json':{schema:inputSchemaFor('orchestrator.execute')}}},responses:{'200':{description:'Execute result'},'401':{description:'Role token required'}}}},'/receipts':{get:{operationId:'listReceipts',summary:'List receipts',security:[{AFOBearer:[]}],responses:{'200':{description:'Receipts'}}}},'/mcp':{get:{operationId:'getMcpInfo',summary:'Get MCP information',responses:{'200':{description:'MCP capabilities'}}},post:{operationId:'mcpRpc',summary:'JSON-RPC MCP endpoint',responses:{'200':{description:'MCP JSON-RPC response'}}}}}}}
 async function handleMcp(request,env){if(request.method==='GET')return json({ok:true,protocol:'mcp',serverInfo:{name:'afo-agent-gateway',version:VERSION},capabilities:{tools:{listChanged:false}},tools:mcpTools});const body=await readJson(request);const id=body.id??null;try{if(body.method==='initialize')return json({jsonrpc:'2.0',id,result:{protocolVersion:'2024-11-05',capabilities:{tools:{listChanged:false}},serverInfo:{name:'afo-agent-gateway',version:VERSION}}});if(body.method==='tools/list')return json({jsonrpc:'2.0',id,result:{tools:mcpTools}});if(body.method==='tools/call'){const name=body.params?.name;const args=body.params?.arguments||{};let result;if(name==='agent.invoke'){const auth=requireRole(request,env,'operator');if(!auth.ok)return auth.response;result=await invokeTool(env,args,auth.role)}else{const role=roleFromRequest(request,env);result=await invokeTool(env,{toolId:name,purpose:`MCP call ${name}`,input:args},role)}return json({jsonrpc:'2.0',id,result:{content:[{type:'text',text:JSON.stringify(result,null,2)}]}})}return json({jsonrpc:'2.0',id,error:{code:-32601,message:'method_not_found'}})}catch(e){return json({jsonrpc:'2.0',id,error:{code:-32000,message:e.message||String(e)}})}}
-export default{async fetch(request,env){const url=new URL(request.url);if(request.method==='OPTIONS')return new Response(null,{headers:cors()});if(request.method==='GET'&&(url.pathname==='/'||url.pathname==='/status'))return json(status(env));if(request.method==='GET'&&(url.pathname==='/openapi.json'||url.pathname==='/.well-known/openapi.json'||url.pathname==='/actions/openapi.json'))return json(openApiSchema());if(url.pathname==='/mcp')return handleMcp(request,env);if(request.method==='GET'&&url.pathname==='/registry/tools')return json({ok:true,tools:await dbTools(env)});if(request.method==='POST'&&url.pathname==='/registry/search'){const body=await readJson(request);return json({ok:true,tools:searchTools(await dbTools(env),body)})}const inspect=url.pathname.match(/^\/registry\/tools\/([^/]+)$/);if(request.method==='GET'&&inspect){const tool=(await dbTools(env)).find(t=>t.id===decodeURIComponent(inspect[1]));return tool?json({ok:true,tool}):json({ok:false,error:'tool_not_found'},{status:404})}const invoke=url.pathname.match(/^\/agent\/([^/]+)\/invoke$/);if(request.method==='POST'&&invoke){const body=await readJson(request);const toolList=await dbTools(env);const requestedTool=toolList.find(t=>t.id===body.toolId);const required=requestedTool?.requiredRole||'operator';const auth=requireRole(request,env,required);if(!auth.ok)return auth.response;try{const result=await invokeTool(env,body,auth.role);return json({ok:true,...result,receipts:await dbReceipts(env,10)})}catch(e){return json({ok:false,error:e.message||String(e),receipts:await dbReceipts(env,10)},{status:400})}}if(request.method==='GET'&&url.pathname==='/receipts'){const auth=requireRole(request,env,'operator');if(!auth.ok)return auth.response;return json({ok:true,receipts:await dbReceipts(env,url.searchParams.get('limit')||50)})}if(request.method==='GET'&&url.pathname==='/approvals'){const auth=requireRole(request,env,'operator');if(!auth.ok)return auth.response;try{return json({ok:true,approvals:await listApprovals(env,{status:url.searchParams.get('status')||undefined,limit:url.searchParams.get('limit')||25})})}catch(e){return json({ok:false,error:e.message||String(e)},{status:400})}}if(url.pathname.startsWith('/admin/')){const auth=requireRole(request,env,'admin');if(!auth.ok)return auth.response;return json({ok:true,admin:true,status:status(env),receipts:await dbReceipts(env,25),headers:redactHeaders(request.headers)})}return json({ok:false,error:'not_found'},{status:404})}};
+async function handleOrchestratorRoute(request,env,toolId){
+  const body=await readJson(request);
+  const role=roleFromRequest(request,env);
+  const purpose=body.purpose||body.task||`orchestrator call: ${toolId}`;
+  try{
+    const result=await invokeTool(env,{toolId,purpose,input:body},role);
+    return json({ok:true,...result});
+  }catch(e){
+    const msg=e.message||String(e);
+    const status=msg.startsWith('role_denied')?401:400;
+    return json({ok:false,error:msg},{status});
+  }
+}
+export default{async fetch(request,env){const url=new URL(request.url);if(request.method==='OPTIONS')return new Response(null,{headers:cors()});if(request.method==='GET'&&(url.pathname==='/'||url.pathname==='/status'))return json(status(env));if(request.method==='GET'&&(url.pathname==='/openapi.json'||url.pathname==='/.well-known/openapi.json'||url.pathname==='/actions/openapi.json'))return json(openApiSchema());if(url.pathname==='/mcp')return handleMcp(request,env);if(request.method==='GET'&&url.pathname==='/registry/tools')return json({ok:true,tools:await dbTools(env)});if(request.method==='POST'&&url.pathname==='/registry/search'){const body=await readJson(request);return json({ok:true,tools:searchTools(await dbTools(env),body)})}const inspect=url.pathname.match(/^\/registry\/tools\/([^/]+)$/);if(request.method==='GET'&&inspect){const tool=(await dbTools(env)).find(t=>t.id===decodeURIComponent(inspect[1]));return tool?json({ok:true,tool}):json({ok:false,error:'tool_not_found'},{status:404})}const invoke=url.pathname.match(/^\/agent\/([^/]+)\/invoke$/);if(request.method==='POST'&&invoke){const body=await readJson(request);const toolList=await dbTools(env);const requestedTool=toolList.find(t=>t.id===body.toolId);const required=requestedTool?.requiredRole||'operator';const auth=requireRole(request,env,required);if(!auth.ok)return auth.response;try{const result=await invokeTool(env,body,auth.role);return json({ok:true,...result,receipts:await dbReceipts(env,10)})}catch(e){return json({ok:false,error:e.message||String(e),receipts:await dbReceipts(env,10)},{status:400})}}if(request.method==='POST'&&url.pathname==='/orchestrator/plan')return handleOrchestratorRoute(request,env,'orchestrator.plan');if(request.method==='POST'&&url.pathname==='/orchestrator/route')return handleOrchestratorRoute(request,env,'orchestrator.route');if(request.method==='POST'&&url.pathname==='/orchestrator/execute')return handleOrchestratorRoute(request,env,'orchestrator.execute');if(request.method==='GET'&&url.pathname==='/receipts'){const auth=requireRole(request,env,'operator');if(!auth.ok)return auth.response;return json({ok:true,receipts:await dbReceipts(env,url.searchParams.get('limit')||50)})}if(request.method==='GET'&&url.pathname==='/approvals'){const auth=requireRole(request,env,'operator');if(!auth.ok)return auth.response;try{return json({ok:true,approvals:await listApprovals(env,{status:url.searchParams.get('status')||undefined,limit:url.searchParams.get('limit')||25})})}catch(e){return json({ok:false,error:e.message||String(e)},{status:400})}}if(url.pathname.startsWith('/admin/')){const auth=requireRole(request,env,'admin');if(!auth.ok)return auth.response;return json({ok:true,admin:true,status:status(env),receipts:await dbReceipts(env,25),headers:redactHeaders(request.headers)})}return json({ok:false,error:'not_found'},{status:404})}};
