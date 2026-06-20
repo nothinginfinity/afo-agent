@@ -1,0 +1,73 @@
+{
+  "version": "0.3.0",
+  "tools": [
+    {
+      "id": "orchestrator.plan",
+      "name": "OrchestratorPlan",
+      "description": "Interpret a natural language task into a capability, rank candidate tools from the live registry, and propose a tool without invoking anything.",
+      "capabilities": [
+        "plan task execution",
+        "interpret natural language task",
+        "propose tool selection",
+        "assess approval requirement"
+      ],
+      "permissions": ["registry:read"],
+      "environment": "worker",
+      "risk": "read",
+      "inputSchema": "task:string,riskMax?:ToolRisk,environment?:string,requiredRole?:string,requireApproval?:boolean,dryRun?:boolean",
+      "outputSchema": "capability:string,candidates:RankedCandidate[],selected:ToolSummary|null,riskSummary:object|null,approvalRequired:boolean,proposedNextAction:string",
+      "requiredRole": "public"
+    },
+    {
+      "id": "orchestrator.route",
+      "name": "OrchestratorRoute",
+      "description": "Resolve a task, or an explicit toolId, to one fully inspected candidate tool plus its policy evaluation, without invoking it.",
+      "capabilities": [
+        "resolve task to tool",
+        "lock candidate tool",
+        "inspect selected tool",
+        "evaluate routing policy"
+      ],
+      "permissions": ["registry:read"],
+      "environment": "worker",
+      "risk": "read",
+      "inputSchema": "task:string,toolId?:string,riskMax?:ToolRisk,environment?:string,requiredRole?:string",
+      "outputSchema": "capability:string,candidatesConsidered:RankedCandidate[],selected:ToolManifest|null,approvalRequired:boolean,locked:boolean,proposedNextAction:string",
+      "requiredRole": "public"
+    },
+    {
+      "id": "orchestrator.execute",
+      "name": "OrchestratorExecute",
+      "description": "Plan a task, then either invoke the selected tool directly when safe, or create a pending approval when the tool is write, money, destructive, or role-restricted for the caller.",
+      "capabilities": [
+        "execute planned task",
+        "route to approval when gated",
+        "invoke selected tool",
+        "write orchestrator receipt"
+      ],
+      "permissions": ["agent:invoke", "receipts:write", "approvals:write"],
+      "environment": "worker",
+      "risk": "write",
+      "inputSchema": "task:string,input?:object,riskMax?:ToolRisk,environment?:string,requiredRole?:string",
+      "outputSchema": "executed:boolean,approvalRequired:boolean,result?:any,approval?:object,reason?:string,selectedTool?:string",
+      "requiredRole": "operator"
+    },
+    {
+      "id": "orchestrator.explain",
+      "name": "OrchestratorExplain",
+      "description": "Look up receipts for a requestId and return a human readable explanation of what an orchestrator run decided and why.",
+      "capabilities": [
+        "explain orchestrator run",
+        "summarize receipt",
+        "audit decision reason"
+      ],
+      "permissions": ["receipts:read"],
+      "environment": "worker",
+      "risk": "read",
+      "inputSchema": "requestId:string",
+      "outputSchema": "found:boolean,receipts:Receipt[],summary:string",
+      "requiredRole": "operator"
+    }
+  ],
+  "agents": []
+}
