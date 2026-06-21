@@ -1,4 +1,4 @@
-const BUILD_ID = 'byok-registry-fallback-2026-06-21-01';
+const BUILD_ID = 'byok-mcp-registry-fallback-2026-06-21-01';
 const DEFAULT_MCP_URL = 'https://afo-agent-gateway.jaredtechfit.workers.dev/mcp';
 const DEFAULT_ANTHROPIC_VERSION = '2023-06-01';
 
@@ -127,9 +127,12 @@ function getAfoRoleToken(input, env, request) {
   return input.afoRoleToken || request.headers.get('x-afo-role-token') || env.AFO_AGENT_READ_TOKEN || '';
 }
 
+function getMcpUrl(input, env) {
+  return input.mcpUrl || env.AFO_MCP_URL || DEFAULT_MCP_URL;
+}
+
 function getGatewayBase(input, env) {
-  const mcpUrl = input.mcpUrl || env.AFO_MCP_URL || DEFAULT_MCP_URL;
-  return mcpUrl.replace(/\/mcp\/?$/, '');
+  return getMcpUrl(input, env).replace(/\/mcp\/?$/, '');
 }
 
 function authHeaders(token) {
@@ -168,6 +171,24 @@ async function afoFetchJson(url, options) {
   const response = await fetch(url, options);
   const data = await response.json().catch(() => ({}));
   return { ok: response.ok, status: response.status, data };
+}
+
+function parseMcpToolResult(data) {
+  const text = data?.result?.content?.find?.((item) => item?.type === 'text')?.text;
+  if (!text) return data;
+  try { return JSON.parse(text); } catch { return { text }; }
+}
+
+async function afoMcpToolCall(input, env, request, toolName, args) {
+  const token = getAfoRoleToken(input, env, request);
+  const response = await fetch(getMcpUrl(input, env), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...authHeaders(token) },
+    body: JSON.stringify({ jsonrpc: '2.0', id: crypto.randomUUID(), method: 'tools/call', params: { name: toolName, arguments: args || {} } })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.error) return { ok: false, status: response.status || 500, data: { ok: false, error: data.error?.message || 'mcp_tool_call_failed', raw: data } };
+  return { ok: true, status: response.status, data: parseMcpToolResult(data) };
 }
 
 function arrayFromRegistryPayload(data) {
@@ -212,7 +233,12 @@ async function registrySearchFallback(gatewayBase, headers, body) {
   if (listTools.ok && filtered.length) return { ok: true, status: listTools.status, data: { ok: true, route: 'GET /registry/tools filtered', tools: filtered, raw: listTools.data, attempts } };
   if (listTools.ok && listed.length) return { ok: true, status: listTools.status, data: { ok: true, route: 'GET /registry/tools unfiltered', tools: listed.slice(0, 25), raw: listTools.data, attempts, warning: 'No exact capability match; returned first registry tools.' } };
 
-  return { ok: false, status: postSearch.status || getSearch.status || listTools.status || 404, data: { ok: false, error: 'afo_registry_search_failed', attempts, raw: { postSearch: postSearch.data, getSearch: getSearch.data, listTools: listTools.data } } };
+  const mcpSearch = await afoMcpToolCall({ ...body, mcpUrl: `${gatewayBase}/mcp` }, { AFO_MCP_URL: `${gatewayBase}/mcp` }, { headers: new Headers(headers) }, 'registry.search', body);
+  attempts.push({ route: 'MCP tools/call registry.search', status: mcpSearch.status, ok: mcpSearch.ok });
+  const mcpTools = arrayFromRegistryPayload(mcpSearch.data?.output || mcpSearch.data);
+  if (mcpSearch.ok && mcpTools.length) return { ok: true, status: mcpSearch.status, data: { ok: true, route: 'MCP tools/call registry.search', tools: mcpTools, raw: mcpSearch.data, attempts } };
+
+  return { ok: false, status: postSearch.status || getSearch.status || listTools.status || mcpSearch.status || 404, data: { ok: false, error: 'afo_registry_search_failed', attempts, raw: { postSearch: postSearch.data, getSearch: getSearch.data, listTools: listTools.data, mcpSearch: mcpSearch.data } } };
 }
 
 async function executeAfoFunction(name, args, input, env, request) {
@@ -228,7 +254,10 @@ async function executeAfoFunction(name, args, input, env, request) {
 
   if (name === 'afo_registry_inspect') {
     const toolId = required(parsed.toolId, 'toolId');
-    return afoFetchJson(`${gatewayBase}/registry/tools/${encodeURIComponent(toolId)}`, { method: 'GET', headers });
+    const rest = await afoFetchJson(`${gatewayBase}/registry/tools/${encodeURIComponent(toolId)}`, { method: 'GET', headers });
+    if (rest.ok) return rest;
+    const mcp = await afoMcpToolCall(input, env, request, 'registry.inspect', { toolId });
+    return mcp.ok ? { ok: true, status: mcp.status, data: { ok: true, route: 'MCP tools/call registry.inspect', raw: mcp.data, tool: mcp.data?.output?.tool || mcp.data?.tool } } : rest;
   }
 
   if (name === 'afo_agent_invoke') {
