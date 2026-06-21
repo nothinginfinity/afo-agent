@@ -30,6 +30,26 @@ jobs:
       - name: Check gateway syntax
         run: node --check worker/standalone/index.js
 
+      - name: Write standalone deploy config
+        run: |
+          cat > wrangler.agent-gateway.toml <<'EOF'
+          name = "afo-agent-gateway"
+          main = "worker/standalone/index.js"
+          compatibility_date = "2026-06-19"
+
+          [vars]
+          AFO_AGENT_VERSION = "0.3.0"
+
+          [[d1_databases]]
+          binding = "AFO_DB"
+          database_name = "afo-agent-db"
+          database_id = "988f3f2c-5952-4eb7-8594-ccba55e72af2"
+
+          [[r2_buckets]]
+          binding = "AFO_ARTIFACTS"
+          bucket_name = "afo-agent-artifacts"
+          EOF
+
       - name: Install Wrangler
         run: npm install -g wrangler
 
@@ -37,4 +57,4 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-        run: wrangler deploy worker/standalone/index.js --name afo-agent-gateway --compatibility-date 2026-06-19 --keep-vars
+        run: wrangler deploy --config wrangler.agent-gateway.toml --keep-vars
