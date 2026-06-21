@@ -15,6 +15,20 @@ const MODEL_OPTIONS = {
   'openai-compatible': ['custom-model']
 };
 
+const PROVIDER_LABELS = {
+  anthropic: 'Anthropic / Claude',
+  openai: 'ChatGPT / OpenAI',
+  chatgpt: 'ChatGPT / OpenAI',
+  gemini: 'Google Gemini',
+  xai: 'xAI / Grok',
+  deepseek: 'DeepSeek',
+  kimi: 'Kimi / Moonshot',
+  mistral: 'Mistral',
+  groq: 'Groq',
+  cerebras: 'Cerebras',
+  'openai-compatible': 'Custom OpenAI-Compatible'
+};
+
 const OPENAI_COMPATIBLE = {
   openai: { label: 'ChatGPT / OpenAI', endpoint: 'https://api.openai.com/v1/chat/completions', defaultModel: 'gpt-4.1-mini' },
   chatgpt: { label: 'ChatGPT / OpenAI', endpoint: 'https://api.openai.com/v1/chat/completions', defaultModel: 'gpt-4.1-mini' },
@@ -39,6 +53,17 @@ function json(data, init = {}) {
     ...init,
     headers: {
       'content-type': 'application/json; charset=utf-8',
+      ...cors(),
+      ...(init.headers || {})
+    }
+  });
+}
+
+function html(body, init = {}) {
+  return new Response(body, {
+    ...init,
+    headers: {
+      'content-type': 'text/html; charset=utf-8',
       ...cors(),
       ...(init.headers || {})
     }
@@ -122,6 +147,147 @@ function receipt(provider, model, status, toolIds = [], error) {
   };
 }
 
+function appHtml(env) {
+  const boot = JSON.stringify({ providers: Object.keys(MODEL_OPTIONS), modelOptions: MODEL_OPTIONS, labels: PROVIDER_LABELS, mcpUrl: env.AFO_MCP_URL || DEFAULT_MCP_URL });
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AFO BYOK Agent Gateway</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; background:#080b12; color:#e8eefc; }
+    * { box-sizing: border-box; }
+    body { margin:0; min-height:100vh; background: radial-gradient(circle at top left,#15345d 0,#080b12 38%,#05070b 100%); }
+    main { max-width: 1120px; margin: 0 auto; padding: 28px 16px 44px; }
+    .hero { display:flex; justify-content:space-between; gap:20px; align-items:flex-start; margin-bottom:20px; }
+    h1 { margin:0 0 8px; font-size: clamp(28px, 5vw, 54px); letter-spacing:-0.05em; }
+    .subtitle { margin:0; color:#9eb2d9; line-height:1.55; max-width:760px; }
+    .pill { border:1px solid #2b4772; background:#0d1627cc; padding:8px 12px; border-radius:999px; color:#9ed0ff; white-space:nowrap; font-size:13px; }
+    .grid { display:grid; grid-template-columns: minmax(0, 410px) minmax(0, 1fr); gap:18px; }
+    @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } .hero { flex-direction:column; } }
+    section { border:1px solid #203759; border-radius:20px; background:#0c1321d9; box-shadow:0 20px 80px #0009; overflow:hidden; }
+    .card-head { padding:18px 18px 0; }
+    .card-title { margin:0 0 5px; font-size:18px; }
+    .card-copy { margin:0 0 14px; color:#93a8cd; font-size:13px; line-height:1.5; }
+    form { padding:18px; display:grid; gap:13px; }
+    label { display:grid; gap:6px; color:#b7c8e8; font-size:13px; font-weight:650; }
+    input, select, textarea, button { width:100%; border:1px solid #2a4167; border-radius:12px; background:#08101d; color:#f4f7ff; padding:11px 12px; font:inherit; }
+    textarea { min-height:150px; resize:vertical; line-height:1.45; }
+    button { cursor:pointer; background:linear-gradient(135deg,#2b7fff,#7a5cff); border:0; font-weight:800; letter-spacing:.01em; }
+    button:disabled { opacity:.55; cursor:not-allowed; }
+    .row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    @media (max-width: 520px) { .row { grid-template-columns: 1fr; } }
+    .fine { color:#7990b9; font-size:12px; line-height:1.45; margin-top:-4px; }
+    .output { padding:18px; min-height:520px; }
+    .status { color:#9eb2d9; font-size:13px; margin-bottom:12px; }
+    .error { background:#3a1019; color:#ffd6de; border:1px solid #7c2638; padding:12px; border-radius:12px; white-space:pre-wrap; }
+    .text { line-height:1.65; white-space:pre-wrap; }
+    pre { overflow:auto; white-space:pre-wrap; word-break:break-word; background:#050b14; border:1px solid #1b304f; border-radius:12px; padding:12px; color:#b9d3ff; }
+    details { margin-top:12px; }
+    summary { cursor:pointer; color:#9ed0ff; font-weight:700; }
+    .links { display:flex; gap:10px; flex-wrap:wrap; margin-top:14px; }
+    a { color:#9ed0ff; }
+  </style>
+</head>
+<body>
+<main>
+  <div class="hero">
+    <div>
+      <h1>AFO BYOK Agent Gateway</h1>
+      <p class="subtitle">Bring your own model token, choose a provider/model, and route requests through the AFO Agent Gateway. Anthropic has remote MCP enabled; other providers currently receive AFO Gateway context until native tool adapters are added.</p>
+      <div class="links"><a href="/health">Health</a><a href="/api/byok/models">Models JSON</a><a href="/api/byok/chat">Chat endpoint help</a></div>
+    </div>
+    <div class="pill">No provider tokens are stored</div>
+  </div>
+  <div class="grid">
+    <section>
+      <div class="card-head">
+        <h2 class="card-title">Request</h2>
+        <p class="card-copy">Token values are sent only with this request. Use a low-scope test token while validating providers.</p>
+      </div>
+      <form id="form">
+        <label>Provider<select id="provider"></select></label>
+        <div class="row">
+          <label>Model preset<select id="preset"></select></label>
+          <label>Model ID<input id="model" autocomplete="off" /></label>
+        </div>
+        <label id="baseWrap" style="display:none">Custom base URL<input id="baseUrl" placeholder="https://provider.example/v1" autocomplete="off" /></label>
+        <label>BYOK token<input id="token" type="password" placeholder="Paste provider token for this request" autocomplete="off" /></label>
+        <label>AFO role token<input id="afoToken" type="password" placeholder="Optional AFO read/operator/owner token" autocomplete="off" /></label>
+        <label>Prompt<textarea id="prompt">Search AFO Agent Gateway for GitHub tools and summarize what I can do next.</textarea></label>
+        <div class="fine">Tip: Anthropic can use remote MCP. DeepSeek, Kimi, xAI, ChatGPT/OpenAI, Gemini, Mistral, Groq, and Cerebras use the context bridge in this build.</div>
+        <button id="send" type="submit">Send through BYOK Gateway</button>
+      </form>
+    </section>
+    <section>
+      <div class="card-head">
+        <h2 class="card-title">Response</h2>
+        <p class="card-copy">Tool calls, text, receipts, and raw provider JSON appear here.</p>
+      </div>
+      <div class="output" id="output"><div class="status">Ready.</div></div>
+    </section>
+  </div>
+</main>
+<script>
+const BOOT = ${boot};
+const providerEl = document.getElementById('provider');
+const presetEl = document.getElementById('preset');
+const modelEl = document.getElementById('model');
+const baseWrap = document.getElementById('baseWrap');
+const baseUrlEl = document.getElementById('baseUrl');
+const output = document.getElementById('output');
+const send = document.getElementById('send');
+
+function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function renderPre(label, obj){ return '<details open><summary>'+esc(label)+'</summary><pre>'+esc(JSON.stringify(obj, null, 2))+'</pre></details>'; }
+function fillProviders(){
+  providerEl.innerHTML = BOOT.providers.map(p => '<option value="'+esc(p)+'">'+esc(BOOT.labels[p] || p)+'</option>').join('');
+  providerEl.value = 'anthropic';
+  fillModels();
+}
+function fillModels(){
+  const provider = providerEl.value;
+  const models = BOOT.modelOptions[provider] || ['custom-model'];
+  presetEl.innerHTML = models.map(m => '<option value="'+esc(m)+'">'+esc(m)+'</option>').join('') + '<option value="custom">Custom model ID</option>';
+  presetEl.value = models[0];
+  modelEl.value = models[0];
+  baseWrap.style.display = provider === 'openai-compatible' ? 'grid' : 'none';
+}
+providerEl.addEventListener('change', fillModels);
+presetEl.addEventListener('change', () => { if (presetEl.value !== 'custom') modelEl.value = presetEl.value; });
+
+document.getElementById('form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  send.disabled = true;
+  output.innerHTML = '<div class="status">Running…</div>';
+  const payload = {
+    provider: providerEl.value,
+    model: modelEl.value,
+    baseUrl: baseUrlEl.value,
+    providerKey: document.getElementById('token').value,
+    afoRoleToken: document.getElementById('afoToken').value,
+    prompt: document.getElementById('prompt').value,
+    maxTokens: 1000
+  };
+  try {
+    const res = await fetch('/api/byok/chat', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload) });
+    const data = await res.json();
+    if (!res.ok || data.ok === false) throw new Error(data.error || 'Request failed');
+    const text = data.text || (Array.isArray(data.content) ? data.content.filter(b => b.type === 'text').map(b => b.text).join('\n\n') : '');
+    output.innerHTML = (text ? '<div class="text">'+esc(text)+'</div>' : '<div class="status">No text block returned.</div>') + renderPre('Tool calls', data.toolCalls || []) + renderPre('Receipts', data.receipts || []) + renderPre('Raw JSON', data.raw || data);
+  } catch (err) {
+    output.innerHTML = '<div class="error">'+esc(err.message || err)+'</div>';
+  } finally {
+    send.disabled = false;
+  }
+});
+fillProviders();
+</script>
+</body>
+</html>`;
+}
+
 function chatHelp(env) {
   return json({
     ok: true,
@@ -138,8 +304,7 @@ function chatHelp(env) {
       afoRoleToken: 'optional-afo-role-token',
       prompt: 'Search AFO Agent Gateway for GitHub tools.',
       maxTokens: 1000
-    },
-    curl: 'curl -X POST https://afo-byok-agent-gateway.jaredtechfit.workers.dev/api/byok/chat -H "content-type: application/json" -d "{...}"'
+    }
   });
 }
 
@@ -252,7 +417,8 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === 'OPTIONS') return new Response(null, { headers: cors() });
-    if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/health')) {
+    if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/app')) return appHtml(env);
+    if (request.method === 'GET' && url.pathname === '/health') {
       return json({
         ok: true,
         name: 'afo-byok-agent-gateway',
@@ -270,6 +436,6 @@ export default {
     if (request.method === 'GET' && url.pathname === '/api/byok/models') return json({ ok: true, providers: Object.keys(MODEL_OPTIONS), modelOptions: MODEL_OPTIONS });
     if (request.method === 'GET' && url.pathname === '/api/byok/chat') return chatHelp(env);
     if (request.method === 'POST' && url.pathname === '/api/byok/chat') return handleChat(request, env);
-    return json({ ok: false, error: 'not_found', path: url.pathname, method: request.method, available: ['GET /health', 'GET /api/byok/models', 'GET /api/byok/chat', 'POST /api/byok/chat'] }, { status: 404 });
+    return json({ ok: false, error: 'not_found', path: url.pathname, method: request.method, available: ['GET /', 'GET /app', 'GET /health', 'GET /api/byok/models', 'GET /api/byok/chat', 'POST /api/byok/chat'] }, { status: 404 });
   }
 };
