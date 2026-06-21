@@ -241,9 +241,10 @@ async function runSelfCheck(label, fn, args, input, env) {
 }
 
 async function handleSelfTest(request, env) {
-  const owner = 'nothinginfinity';
-  const repo = 'afo-agent';
-  const filePath = 'package.json';
+  const url = new URL(request.url);
+  const owner = url.searchParams.get('owner') || 'nothinginfinity';
+  const repo = url.searchParams.get('repo') || 'afo-agent';
+  const filePath = url.searchParams.get('path') || 'package.json';
   const input = { mcpUrl: env.AFO_MCP_URL || DEFAULT_MCP_URL, includeAfoContext: false, allowAfoInvoke: false, riskMax: 'read' };
   const checks = [];
   checks.push({ label: 'AFO_DB binding', fn: 'binding.AFO_DB', status: env.AFO_DB ? 'callable' : 'not_configured', httpStatus: env.AFO_DB ? 200 : 0, ms: 0, result: { present: !!env.AFO_DB } });
