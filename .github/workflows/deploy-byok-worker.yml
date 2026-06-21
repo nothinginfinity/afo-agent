@@ -19,6 +19,11 @@ on:
         description: Anthropic API version header
         required: true
         default: "2023-06-01"
+  push:
+    branches: [main]
+    paths:
+      - 'worker/byok/index.js'
+      - '.github/workflows/deploy-byok-worker.yml'
 
 jobs:
   validate:
@@ -41,17 +46,31 @@ jobs:
         with:
           node-version: 22
       - run: npm install
+      - name: Resolve deploy inputs
+        id: vars
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "script_name=${{ inputs.script_name }}" >> "$GITHUB_OUTPUT"
+            echo "mcp_url=${{ inputs.mcp_url }}" >> "$GITHUB_OUTPUT"
+            echo "default_anthropic_model=${{ inputs.default_anthropic_model }}" >> "$GITHUB_OUTPUT"
+            echo "anthropic_version=${{ inputs.anthropic_version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "script_name=afo-byok-agent-gateway" >> "$GITHUB_OUTPUT"
+            echo "mcp_url=https://afo-agent-gateway.jaredtechfit.workers.dev/mcp" >> "$GITHUB_OUTPUT"
+            echo "default_anthropic_model=claude-sonnet-4-6" >> "$GITHUB_OUTPUT"
+            echo "anthropic_version=2023-06-01" >> "$GITHUB_OUTPUT"
+          fi
       - name: Write BYOK Wrangler config
         run: |
-          cat > wrangler.byok.toml <<'EOF'
-          name = "${{ inputs.script_name }}"
+          cat > wrangler.byok.toml <<EOF
+          name = "${{ steps.vars.outputs.script_name }}"
           main = "worker/byok/index.js"
           compatibility_date = "2026-06-19"
 
           [vars]
-          AFO_MCP_URL = "${{ inputs.mcp_url }}"
-          DEFAULT_ANTHROPIC_MODEL = "${{ inputs.default_anthropic_model }}"
-          ANTHROPIC_VERSION = "${{ inputs.anthropic_version }}"
+          AFO_MCP_URL = "${{ steps.vars.outputs.mcp_url }}"
+          DEFAULT_ANTHROPIC_MODEL = "${{ steps.vars.outputs.default_anthropic_model }}"
+          ANTHROPIC_VERSION = "${{ steps.vars.outputs.anthropic_version }}"
           EOF
       - name: Deploy BYOK Worker
         run: npx wrangler deploy --config wrangler.byok.toml
@@ -60,7 +79,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
       - name: Deployment summary
         run: |
-          echo "BYOK Worker deployed: ${{ inputs.script_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "Health URL: https://${{ inputs.script_name }}.jaredtechfit.workers.dev/health" >> $GITHUB_STEP_SUMMARY
-          echo "Chat URL: https://${{ inputs.script_name }}.jaredtechfit.workers.dev/api/byok/chat" >> $GITHUB_STEP_SUMMARY
-          echo "Models URL: https://${{ inputs.script_name }}.jaredtechfit.workers.dev/api/byok/models" >> $GITHUB_STEP_SUMMARY
+          echo "BYOK Worker deployed: ${{ steps.vars.outputs.script_name }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Health URL: https://${{ steps.vars.outputs.script_name }}.jaredtechfit.workers.dev/health" >> "$GITHUB_STEP_SUMMARY"
+          echo "Chat URL: https://${{ steps.vars.outputs.script_name }}.jaredtechfit.workers.dev/api/byok/chat" >> "$GITHUB_STEP_SUMMARY"
+          echo "Models URL: https://${{ steps.vars.outputs.script_name }}.jaredtechfit.workers.dev/api/byok/models" >> "$GITHUB_STEP_SUMMARY"
