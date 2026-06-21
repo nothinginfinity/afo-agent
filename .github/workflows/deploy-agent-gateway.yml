@@ -1,0 +1,40 @@
+name: deploy-agent-gateway
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_note:
+        description: Manual deploy note
+        required: false
+        default: deploy patched AFO Agent Gateway
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy afo-agent-gateway
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Apply Zip bridge patch
+        run: node scripts/apply-zip-bridge-to-standalone.mjs
+
+      - name: Check gateway syntax
+        run: node --check worker/standalone/index.js
+
+      - name: Install Wrangler
+        run: npm install -g wrangler
+
+      - name: Deploy Agent Gateway
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        run: wrangler deploy worker/standalone/index.js --name afo-agent-gateway --compatibility-date 2026-06-19 --keep-vars
