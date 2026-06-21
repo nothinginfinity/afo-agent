@@ -1,4 +1,4 @@
-const BUILD_ID = 'byok-anthropic-tool-loop-2026-06-21-01';
+const BUILD_ID = 'byok-registry-fallback-2026-06-21-01';
 const DEFAULT_MCP_URL = 'https://afo-agent-gateway.jaredtechfit.workers.dev/mcp';
 const DEFAULT_ANTHROPIC_VERSION = '2023-06-01';
 
@@ -170,6 +170,51 @@ async function afoFetchJson(url, options) {
   return { ok: response.ok, status: response.status, data };
 }
 
+function arrayFromRegistryPayload(data) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.tools)) return data.tools;
+  if (Array.isArray(data?.matches)) return data.matches;
+  if (Array.isArray(data?.result)) return data.result;
+  if (Array.isArray(data?.result?.tools)) return data.result.tools;
+  if (Array.isArray(data?.data)) return data.data;
+  return [];
+}
+
+function riskRank(value) {
+  return { read: 1, network: 2, write: 3, money: 4, destructive: 5 }[String(value || 'read').toLowerCase()] || 1;
+}
+
+function filterRegistryTools(tools, capability, riskMax) {
+  const q = String(capability || '').toLowerCase();
+  const max = riskRank(riskMax || 'read');
+  return tools.filter((tool) => {
+    const haystack = JSON.stringify(tool || {}).toLowerCase();
+    const risk = riskRank(tool?.risk || tool?.permission || tool?.riskLevel || 'read');
+    return (!q || haystack.includes(q)) && risk <= max;
+  });
+}
+
+async function registrySearchFallback(gatewayBase, headers, body) {
+  const attempts = [];
+  const postSearch = await afoFetchJson(`${gatewayBase}/registry/search`, { method: 'POST', headers, body: JSON.stringify(body) });
+  attempts.push({ route: 'POST /registry/search', status: postSearch.status, ok: postSearch.ok });
+  if (postSearch.ok && arrayFromRegistryPayload(postSearch.data).length) return { ...postSearch, data: { ok: true, route: 'POST /registry/search', tools: arrayFromRegistryPayload(postSearch.data), raw: postSearch.data, attempts } };
+
+  const params = new URLSearchParams({ capability: body.capability || '', riskMax: body.riskMax || 'read' });
+  const getSearch = await afoFetchJson(`${gatewayBase}/registry/search?${params.toString()}`, { method: 'GET', headers });
+  attempts.push({ route: 'GET /registry/search', status: getSearch.status, ok: getSearch.ok });
+  if (getSearch.ok && arrayFromRegistryPayload(getSearch.data).length) return { ...getSearch, data: { ok: true, route: 'GET /registry/search', tools: arrayFromRegistryPayload(getSearch.data), raw: getSearch.data, attempts } };
+
+  const listTools = await afoFetchJson(`${gatewayBase}/registry/tools`, { method: 'GET', headers });
+  attempts.push({ route: 'GET /registry/tools', status: listTools.status, ok: listTools.ok });
+  const listed = arrayFromRegistryPayload(listTools.data);
+  const filtered = filterRegistryTools(listed, body.capability, body.riskMax);
+  if (listTools.ok && filtered.length) return { ok: true, status: listTools.status, data: { ok: true, route: 'GET /registry/tools filtered', tools: filtered, raw: listTools.data, attempts } };
+  if (listTools.ok && listed.length) return { ok: true, status: listTools.status, data: { ok: true, route: 'GET /registry/tools unfiltered', tools: listed.slice(0, 25), raw: listTools.data, attempts, warning: 'No exact capability match; returned first registry tools.' } };
+
+  return { ok: false, status: postSearch.status || getSearch.status || listTools.status || 404, data: { ok: false, error: 'afo_registry_search_failed', attempts, raw: { postSearch: postSearch.data, getSearch: getSearch.data, listTools: listTools.data } } };
+}
+
 async function executeAfoFunction(name, args, input, env, request) {
   const gatewayBase = getGatewayBase(input, env);
   const token = getAfoRoleToken(input, env, request);
@@ -178,7 +223,7 @@ async function executeAfoFunction(name, args, input, env, request) {
 
   if (name === 'afo_registry_search') {
     const body = { capability: parsed.capability || input.toolSearch || 'github cloudflare approvals', riskMax: parsed.riskMax || input.riskMax || 'read' };
-    return afoFetchJson(`${gatewayBase}/registry/search`, { method: 'POST', headers, body: JSON.stringify(body) });
+    return registrySearchFallback(gatewayBase, headers, body);
   }
 
   if (name === 'afo_registry_inspect') {
