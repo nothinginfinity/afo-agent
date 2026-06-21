@@ -1,4 +1,4 @@
-const BUILD_ID = 'byok-anthropic-no-remote-mcp-2026-06-21-01';
+const BUILD_ID = 'byok-anthropic-tool-loop-2026-06-21-01';
 const DEFAULT_MCP_URL = 'https://afo-agent-gateway.jaredtechfit.workers.dev/mcp';
 const DEFAULT_ANTHROPIC_VERSION = '2023-06-01';
 
@@ -235,21 +235,41 @@ async function callAnthropic(input, env, request) {
   const credential = getCredential(input, request);
   const model = required(input.model || env.DEFAULT_ANTHROPIC_MODEL || MODEL_OPTIONS.anthropic[0], 'model');
   const prompt = required(input.prompt, 'prompt');
-  const mcpUrl = input.mcpUrl || env.AFO_MCP_URL || DEFAULT_MCP_URL;
-  const afoRoleToken = getAfoRoleToken(input, env, request);
-  const mcpServer = { type: 'url', url: mcpUrl, name: 'afo-agent-gateway' };
-  if (afoRoleToken) mcpServer.headers = { authorization: `Bearer ${afoRoleToken}` };
   const headers = { 'content-type': 'application/json', 'x-api-key': credential, 'anthropic-version': env.ANTHROPIC_VERSION || DEFAULT_ANTHROPIC_VERSION };
   if (env.ANTHROPIC_BETA) headers['anthropic-beta'] = env.ANTHROPIC_BETA;
-  const upstream = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers, body: JSON.stringify({ model, max_tokens: Math.max(1, Math.min(Number(input.maxTokens || 1000), 8000)), messages: [{ role: 'user', content: prompt }], tools: AFO_FUNCTION_DECLARATIONS.map((fn) => ({ name: fn.name, description: fn.description, input_schema: fn.parameters })) }) });
-  const raw = await upstream.json().catch(() => ({}));
-  if (!upstream.ok) {
-    const error = raw.error?.message || `Anthropic API error ${upstream.status}`;
-    return json({ ok: false, buildId: BUILD_ID, provider: 'anthropic', model, error, raw, receipts: [receipt('anthropic', model, 'failed', [], error)] }, { status: upstream.status });
+  const tools = AFO_FUNCTION_DECLARATIONS.map((fn) => ({ name: fn.name, description: fn.description, input_schema: fn.parameters }));
+  const maxTokens = Math.max(1, Math.min(Number(input.maxTokens || 1000), 8000));
+  const firstBody = { model, max_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] };
+  if (input.nativeTools !== false) firstBody.tools = tools;
+  const firstResponse = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers, body: JSON.stringify(firstBody) });
+  const first = await firstResponse.json().catch(() => ({}));
+  if (!firstResponse.ok) {
+    const error = first.error?.message || `Anthropic API error ${firstResponse.status}`;
+    return json({ ok: false, buildId: BUILD_ID, provider: 'anthropic', model, error, raw: first, receipts: [receipt('anthropic', model, 'failed', [], error)] }, { status: firstResponse.status });
   }
-  const content = Array.isArray(raw.content) ? raw.content : [];
-  const toolCalls = extractToolCalls(content);
-  return json({ ok: true, buildId: BUILD_ID, provider: 'anthropic', model, content, toolCalls, raw, afoCalls: [], receipts: [receipt('anthropic', model, 'executed', toolCalls.map((call) => call.name).filter(Boolean))] });
+  const firstContent = Array.isArray(first.content) ? first.content : [];
+  const toolCalls = firstContent.filter((block) => block && block.type === 'tool_use').map((block) => ({ id: block.id, type: block.type, name: block.name, input: block.input || {} }));
+  const afoCalls = [];
+  if (toolCalls.length) {
+    const toolResults = [];
+    for (const call of toolCalls) {
+      const result = await executeAfoFunction(call.name, call.input || {}, input, env, request);
+      afoCalls.push({ name: call.name, input: call.input || {}, status: result.status, ok: result.ok, result: result.data });
+      toolResults.push({ type: 'tool_result', tool_use_id: call.id, content: JSON.stringify(result.data) });
+    }
+    const secondBody = { model, max_tokens: maxTokens, tools, messages: [{ role: 'user', content: prompt }, { role: 'assistant', content: firstContent }, { role: 'user', content: toolResults }] };
+    const secondResponse = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers, body: JSON.stringify(secondBody) });
+    const raw = await secondResponse.json().catch(() => ({}));
+    if (!secondResponse.ok) {
+      const error = raw.error?.message || `Anthropic final response error ${secondResponse.status}`;
+      return json({ ok: false, buildId: BUILD_ID, provider: 'anthropic', model, error, raw, afoCalls, receipts: [receipt('anthropic', model, 'failed', afoCalls.map((call) => call.name), error)] }, { status: secondResponse.status });
+    }
+    const finalContent = Array.isArray(raw.content) ? raw.content : [];
+    const text = finalContent.filter((block) => block && block.type === 'text').map((block) => block.text || '').join('\n\n');
+    return json({ ok: true, buildId: BUILD_ID, provider: 'anthropic', model, text, content: finalContent, toolCalls, afoCalls, raw, receipts: [receipt('anthropic', model, 'executed', afoCalls.map((call) => call.name))] });
+  }
+  const text = firstContent.filter((block) => block && block.type === 'text').map((block) => block.text || '').join('\n\n');
+  return json({ ok: true, buildId: BUILD_ID, provider: 'anthropic', model, text, content: firstContent, toolCalls: [], afoCalls, raw: first, receipts: [receipt('anthropic', model, 'executed')] });
 }
 
 async function callOpenAiCompatible(input, env, request, provider) {
