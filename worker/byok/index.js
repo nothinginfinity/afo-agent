@@ -1,4 +1,4 @@
-const BUILD_ID = 'byok-d1-registry-inspect-2026-06-21-01';
+const BUILD_ID = 'byok-anthropic-second-tool-pass-2026-06-21-01';
 const DEFAULT_MCP_URL = 'https://afo-agent-gateway.jaredtechfit.workers.dev/mcp';
 const DEFAULT_ANTHROPIC_VERSION = '2023-06-01';
 
@@ -367,6 +367,26 @@ async function callAnthropic(input, env, request) {
       return json({ ok: false, buildId: BUILD_ID, provider: 'anthropic', model, error, raw, afoCalls, receipts: [receipt('anthropic', model, 'failed', afoCalls.map((call) => call.name), error)] }, { status: secondResponse.status });
     }
     const finalContent = Array.isArray(raw.content) ? raw.content : [];
+    const secondToolCalls = finalContent.filter((block) => block && block.type === 'tool_use').map((block) => ({ id: block.id, type: block.type, name: block.name, input: block.input || {} }));
+    if (secondToolCalls.length) {
+      const secondToolResults = [];
+      for (const call of secondToolCalls) {
+        const result = await executeAfoFunction(call.name, call.input || {}, input, env, request);
+        toolCalls.push(call);
+        afoCalls.push({ name: call.name, input: call.input || {}, status: result.status, ok: result.ok, result: result.data, round: 2 });
+        secondToolResults.push({ type: 'tool_result', tool_use_id: call.id, content: JSON.stringify(result.data) });
+      }
+      const thirdBody = { model, max_tokens: maxTokens, tools, messages: [{ role: 'user', content: prompt }, { role: 'assistant', content: firstContent }, { role: 'user', content: toolResults }, { role: 'assistant', content: finalContent }, { role: 'user', content: secondToolResults }] };
+      const thirdResponse = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers, body: JSON.stringify(thirdBody) });
+      const thirdRaw = await thirdResponse.json().catch(() => ({}));
+      if (!thirdResponse.ok) {
+        const error = thirdRaw.error?.message || `Anthropic second follow-up error ${thirdResponse.status}`;
+        return json({ ok: false, buildId: BUILD_ID, provider: 'anthropic', model, error, raw: thirdRaw, afoCalls, toolCalls, receipts: [receipt('anthropic', model, 'failed', afoCalls.map((call) => call.name), error)] }, { status: thirdResponse.status });
+      }
+      const thirdContent = Array.isArray(thirdRaw.content) ? thirdRaw.content : [];
+      const thirdText = thirdContent.filter((block) => block && block.type === 'text').map((block) => block.text || '').join('\n\n');
+      return json({ ok: true, buildId: BUILD_ID, provider: 'anthropic', model, text: thirdText, content: thirdContent, toolCalls, afoCalls, raw: thirdRaw, receipts: [receipt('anthropic', model, 'executed', afoCalls.map((call) => call.name))] });
+    }
     const text = finalContent.filter((block) => block && block.type === 'text').map((block) => block.text || '').join('\n\n');
     return json({ ok: true, buildId: BUILD_ID, provider: 'anthropic', model, text, content: finalContent, toolCalls, afoCalls, raw, receipts: [receipt('anthropic', model, 'executed', afoCalls.map((call) => call.name))] });
   }
