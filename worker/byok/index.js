@@ -1,4 +1,4 @@
-const BUILD_ID = 'byok-d1-registry-2026-06-21-01';
+const BUILD_ID = 'byok-d1-registry-inspect-2026-06-21-01';
 const DEFAULT_MCP_URL = 'https://afo-agent-gateway.jaredtechfit.workers.dev/mcp';
 const DEFAULT_ANTHROPIC_VERSION = '2023-06-01';
 
@@ -228,6 +228,17 @@ async function registrySearchD1(env, body) {
   }
 }
 
+async function registryInspectD1(env, toolId) {
+  if (!env.AFO_DB) return { ok: false, status: 0, data: { ok: false, error: 'd1_binding_missing' } };
+  try {
+    const row = await env.AFO_DB.prepare('SELECT manifest_json FROM tools WHERE id = ?').bind(toolId).first();
+    if (!row) return { ok: false, status: 404, data: { ok: false, error: 'tool_not_found', toolId } };
+    return { ok: true, status: 200, data: { ok: true, route: 'D1 tools table inspect', tool: JSON.parse(row.manifest_json) } };
+  } catch (error) {
+    return { ok: false, status: 500, data: { ok: false, error: 'd1_registry_inspect_failed', message: error.message || String(error) } };
+  }
+}
+
 async function registrySearchFallback(env, gatewayBase, headers, body) {
   const directD1 = await registrySearchD1(env, body);
   if (directD1.ok) return directD1;
@@ -269,10 +280,12 @@ async function executeAfoFunction(name, args, input, env, request) {
 
   if (name === 'afo_registry_inspect') {
     const toolId = required(parsed.toolId, 'toolId');
+    const directD1 = await registryInspectD1(env, toolId);
+    if (directD1.ok) return directD1;
     const rest = await afoFetchJson(`${gatewayBase}/registry/tools/${encodeURIComponent(toolId)}`, { method: 'GET', headers });
     if (rest.ok) return rest;
     const mcp = await afoMcpToolCall(input, env, request, 'registry.inspect', { toolId });
-    return mcp.ok ? { ok: true, status: mcp.status, data: { ok: true, route: 'MCP tools/call registry.inspect', raw: mcp.data, tool: mcp.data?.output?.tool || mcp.data?.tool } } : rest;
+    return mcp.ok ? { ok: true, status: mcp.status, data: { ok: true, route: 'MCP tools/call registry.inspect', raw: mcp.data, tool: mcp.data?.output?.tool || mcp.data?.tool } } : directD1;
   }
 
   if (name === 'afo_agent_invoke') {
