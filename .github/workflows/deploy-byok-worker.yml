@@ -1,0 +1,66 @@
+name: deploy-byok-worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      script_name:
+        description: Cloudflare Worker script name
+        required: true
+        default: afo-byok-agent-gateway
+      mcp_url:
+        description: AFO Agent Gateway MCP URL
+        required: true
+        default: https://afo-agent-gateway.jaredtechfit.workers.dev/mcp
+      default_anthropic_model:
+        description: Default Anthropic model shown by the BYOK broker
+        required: true
+        default: claude-sonnet-4-6
+      anthropic_version:
+        description: Anthropic API version header
+        required: true
+        default: "2023-06-01"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: npm run build
+      - run: test -f worker/byok/index.js
+
+  deploy:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - name: Write BYOK Wrangler config
+        run: |
+          cat > wrangler.byok.toml <<'EOF'
+          name = "${{ inputs.script_name }}"
+          main = "worker/byok/index.js"
+          compatibility_date = "2026-06-19"
+
+          [vars]
+          AFO_MCP_URL = "${{ inputs.mcp_url }}"
+          DEFAULT_ANTHROPIC_MODEL = "${{ inputs.default_anthropic_model }}"
+          ANTHROPIC_VERSION = "${{ inputs.anthropic_version }}"
+          EOF
+      - name: Deploy BYOK Worker
+        run: npx wrangler deploy --config wrangler.byok.toml
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+      - name: Deployment summary
+        run: |
+          echo "BYOK Worker deployed: ${{ inputs.script_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "Health URL: https://${{ inputs.script_name }}.jaredtechfit.workers.dev/health" >> $GITHUB_STEP_SUMMARY
+          echo "Chat URL: https://${{ inputs.script_name }}.jaredtechfit.workers.dev/api/byok/chat" >> $GITHUB_STEP_SUMMARY
+          echo "Models URL: https://${{ inputs.script_name }}.jaredtechfit.workers.dev/api/byok/models" >> $GITHUB_STEP_SUMMARY
