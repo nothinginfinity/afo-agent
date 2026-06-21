@@ -1,4 +1,4 @@
-const BUILD_ID = 'byok-native-tools-2026-06-21-01';
+const BUILD_ID = 'byok-anthropic-no-remote-mcp-2026-06-21-01';
 const DEFAULT_MCP_URL = 'https://afo-agent-gateway.jaredtechfit.workers.dev/mcp';
 const DEFAULT_ANTHROPIC_VERSION = '2023-06-01';
 
@@ -241,7 +241,7 @@ async function callAnthropic(input, env, request) {
   if (afoRoleToken) mcpServer.headers = { authorization: `Bearer ${afoRoleToken}` };
   const headers = { 'content-type': 'application/json', 'x-api-key': credential, 'anthropic-version': env.ANTHROPIC_VERSION || DEFAULT_ANTHROPIC_VERSION };
   if (env.ANTHROPIC_BETA) headers['anthropic-beta'] = env.ANTHROPIC_BETA;
-  const upstream = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers, body: JSON.stringify({ model, max_tokens: Math.max(1, Math.min(Number(input.maxTokens || 1000), 8000)), messages: [{ role: 'user', content: prompt }], mcp_servers: [mcpServer] }) });
+  const upstream = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers, body: JSON.stringify({ model, max_tokens: Math.max(1, Math.min(Number(input.maxTokens || 1000), 8000)), messages: [{ role: 'user', content: prompt }], tools: AFO_FUNCTION_DECLARATIONS.map((fn) => ({ name: fn.name, description: fn.description, input_schema: fn.parameters })) }) });
   const raw = await upstream.json().catch(() => ({}));
   if (!upstream.ok) {
     const error = raw.error?.message || `Anthropic API error ${upstream.status}`;
@@ -362,7 +362,7 @@ export default {
     const url = new URL(request.url);
     if (request.method === 'OPTIONS') return new Response(null, { headers: cors() });
     if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/app')) return appHtml(env);
-    if (request.method === 'GET' && url.pathname === '/health') return json({ ok: true, buildId: BUILD_ID, name: 'afo-byok-agent-gateway', mode: 'ephemeral-provider-credential', supportedProviders: Object.keys(MODEL_OPTIONS), modelOptions: MODEL_OPTIONS, mcpUrl: env.AFO_MCP_URL || DEFAULT_MCP_URL, storesProviderCredentials: false, nativeToolAdapters: { anthropic: 'remote-mcp', openai: 'function-calling', chatgpt: 'function-calling', gemini: 'function-calling' } });
+    if (request.method === 'GET' && url.pathname === '/health') return json({ ok: true, buildId: BUILD_ID, name: 'afo-byok-agent-gateway', mode: 'ephemeral-provider-credential', supportedProviders: Object.keys(MODEL_OPTIONS), modelOptions: MODEL_OPTIONS, mcpUrl: env.AFO_MCP_URL || DEFAULT_MCP_URL, storesProviderCredentials: false, nativeToolAdapters: { anthropic: 'claude-tool-calling-basic', openai: 'function-calling', chatgpt: 'function-calling', gemini: 'function-calling' } });
     if (request.method === 'GET' && url.pathname === '/api/byok/models') return json({ ok: true, buildId: BUILD_ID, providers: Object.keys(MODEL_OPTIONS), modelOptions: MODEL_OPTIONS });
     if (request.method === 'GET' && url.pathname === '/api/byok/chat') return chatHelp(env);
     if (request.method === 'POST' && url.pathname === '/api/byok/chat') return handleChat(request, env);
