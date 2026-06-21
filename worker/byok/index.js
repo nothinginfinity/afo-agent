@@ -16,14 +16,14 @@ const MODEL_OPTIONS = {
 };
 
 const OPENAI_COMPATIBLE = {
-  openai: { label: 'ChatGPT / OpenAI', endpoint: 'https://api.openai.com/v1/chat/completions', auth: 'bearer', defaultModel: 'gpt-4.1-mini' },
-  chatgpt: { label: 'ChatGPT / OpenAI', endpoint: 'https://api.openai.com/v1/chat/completions', auth: 'bearer', defaultModel: 'gpt-4.1-mini' },
-  xai: { label: 'xAI', endpoint: 'https://api.x.ai/v1/chat/completions', auth: 'bearer', defaultModel: 'grok-4' },
-  deepseek: { label: 'DeepSeek', endpoint: 'https://api.deepseek.com/chat/completions', auth: 'bearer', defaultModel: 'deepseek-chat' },
-  kimi: { label: 'Kimi / Moonshot', endpoint: 'https://api.moonshot.ai/v1/chat/completions', auth: 'bearer', defaultModel: 'moonshot-v1-8k' },
-  mistral: { label: 'Mistral', endpoint: 'https://api.mistral.ai/v1/chat/completions', auth: 'bearer', defaultModel: 'mistral-small-latest' },
-  groq: { label: 'Groq', endpoint: 'https://api.groq.com/openai/v1/chat/completions', auth: 'bearer', defaultModel: 'llama-3.3-70b-versatile' },
-  cerebras: { label: 'Cerebras', endpoint: 'https://api.cerebras.ai/v1/chat/completions', auth: 'bearer', defaultModel: 'llama3.1-8b' }
+  openai: { label: 'ChatGPT / OpenAI', endpoint: 'https://api.openai.com/v1/chat/completions', defaultModel: 'gpt-4.1-mini' },
+  chatgpt: { label: 'ChatGPT / OpenAI', endpoint: 'https://api.openai.com/v1/chat/completions', defaultModel: 'gpt-4.1-mini' },
+  xai: { label: 'xAI', endpoint: 'https://api.x.ai/v1/chat/completions', defaultModel: 'grok-4' },
+  deepseek: { label: 'DeepSeek', endpoint: 'https://api.deepseek.com/chat/completions', defaultModel: 'deepseek-chat' },
+  kimi: { label: 'Kimi / Moonshot', endpoint: 'https://api.moonshot.ai/v1/chat/completions', defaultModel: 'moonshot-v1-8k' },
+  mistral: { label: 'Mistral', endpoint: 'https://api.mistral.ai/v1/chat/completions', defaultModel: 'mistral-small-latest' },
+  groq: { label: 'Groq', endpoint: 'https://api.groq.com/openai/v1/chat/completions', defaultModel: 'llama-3.3-70b-versatile' },
+  cerebras: { label: 'Cerebras', endpoint: 'https://api.cerebras.ai/v1/chat/completions', defaultModel: 'llama3.1-8b' }
 };
 
 function cors() {
@@ -122,23 +122,41 @@ function receipt(provider, model, status, toolIds = [], error) {
   };
 }
 
+function chatHelp(env) {
+  return json({
+    ok: true,
+    endpoint: '/api/byok/chat',
+    method: 'POST',
+    message: 'This endpoint is working. Send a POST request with JSON to run a BYOK chat request.',
+    supportedProviders: Object.keys(MODEL_OPTIONS),
+    modelOptions: MODEL_OPTIONS,
+    mcpUrl: env.AFO_MCP_URL || DEFAULT_MCP_URL,
+    example: {
+      provider: 'anthropic',
+      model: MODEL_OPTIONS.anthropic[0],
+      providerKey: 'paste-provider-token-in-ui-or-send-authorization-bearer',
+      afoRoleToken: 'optional-afo-role-token',
+      prompt: 'Search AFO Agent Gateway for GitHub tools.',
+      maxTokens: 1000
+    },
+    curl: 'curl -X POST https://afo-byok-agent-gateway.jaredtechfit.workers.dev/api/byok/chat -H "content-type: application/json" -d "{...}"'
+  });
+}
+
 async function callAnthropic(input, env, request) {
   const credential = getCredential(input, request);
   const model = required(input.model || env.DEFAULT_ANTHROPIC_MODEL || MODEL_OPTIONS.anthropic[0], 'model');
   const prompt = required(input.prompt, 'prompt');
   const mcpUrl = input.mcpUrl || env.AFO_MCP_URL || DEFAULT_MCP_URL;
   const afoRoleToken = getAfoRoleToken(input, env, request);
-
   const mcpServer = { type: 'url', url: mcpUrl, name: 'afo-agent-gateway' };
   if (afoRoleToken) mcpServer.headers = { authorization: `Bearer ${afoRoleToken}` };
-
   const headers = {
     'content-type': 'application/json',
     'x-api-key': credential,
     'anthropic-version': env.ANTHROPIC_VERSION || DEFAULT_ANTHROPIC_VERSION
   };
   if (env.ANTHROPIC_BETA) headers['anthropic-beta'] = env.ANTHROPIC_BETA;
-
   const upstream = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers,
@@ -149,13 +167,11 @@ async function callAnthropic(input, env, request) {
       mcp_servers: [mcpServer]
     })
   });
-
   const raw = await upstream.json().catch(() => ({}));
   if (!upstream.ok) {
     const error = raw.error?.message || `Anthropic API error ${upstream.status}`;
     return json({ ok: false, provider: 'anthropic', model, error, raw, receipts: [receipt('anthropic', model, 'failed', [], error)] }, { status: upstream.status });
   }
-
   const content = Array.isArray(raw.content) ? raw.content : [];
   const toolCalls = extractToolCalls(content);
   return json({ ok: true, provider: 'anthropic', model, content, toolCalls, raw, receipts: [receipt('anthropic', model, 'executed', toolCalls.map((call) => call.name).filter(Boolean))] });
@@ -163,10 +179,9 @@ async function callAnthropic(input, env, request) {
 
 async function callOpenAiCompatible(input, env, request, provider) {
   const config = provider === 'openai-compatible'
-    ? { label: 'OpenAI Compatible', endpoint: required(input.baseUrl, 'baseUrl').replace(/\/$/, '') + '/chat/completions', auth: 'bearer', defaultModel: 'custom-model' }
+    ? { label: 'OpenAI Compatible', endpoint: required(input.baseUrl, 'baseUrl').replace(/\/$/, '') + '/chat/completions', defaultModel: 'custom-model' }
     : OPENAI_COMPATIBLE[provider];
   if (!config) throw new Error(`provider_not_supported:${provider}`);
-
   const credential = getCredential(input, request);
   const model = required(input.model || config.defaultModel, 'model');
   const prompt = required(input.prompt, 'prompt');
@@ -174,7 +189,6 @@ async function callOpenAiCompatible(input, env, request, provider) {
   const messages = [];
   if (afoContext) messages.push({ role: 'system', content: `You are connected to the AFO Agent Gateway context. Use this context to recommend or describe AFO tools. Direct remote MCP execution is currently enabled for Anthropic; this provider uses context bridging until native tool execution is added.\n\n${afoContext}` });
   messages.push({ role: 'user', content: prompt });
-
   const upstream = await fetch(config.endpoint, {
     method: 'POST',
     headers: {
@@ -188,13 +202,11 @@ async function callOpenAiCompatible(input, env, request, provider) {
       temperature: typeof input.temperature === 'number' ? input.temperature : undefined
     })
   });
-
   const raw = await upstream.json().catch(() => ({}));
   if (!upstream.ok) {
     const error = raw.error?.message || raw.message || `${config.label} API error ${upstream.status}`;
     return json({ ok: false, provider, model, error, raw, receipts: [receipt(provider, model, 'failed', [], error)] }, { status: upstream.status });
   }
-
   const text = textFromOpenAi(raw);
   return json({ ok: true, provider, model, text, content: openAiBlocks(text), toolCalls: [], raw, receipts: [receipt(provider, model, 'executed')] });
 }
@@ -206,7 +218,6 @@ async function callGemini(input, env, request) {
   const afoContext = await getAfoToolContext(input, env, request);
   const text = `${afoContext ? `AFO Gateway context:\n${afoContext}\n\n` : ''}${prompt}`;
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(credential)}`;
-
   const upstream = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -215,13 +226,11 @@ async function callGemini(input, env, request) {
       generationConfig: { maxOutputTokens: Math.max(1, Math.min(Number(input.maxTokens || 1000), 8000)) }
     })
   });
-
   const raw = await upstream.json().catch(() => ({}));
   if (!upstream.ok) {
     const error = raw.error?.message || `Gemini API error ${upstream.status}`;
     return json({ ok: false, provider: 'gemini', model, error, raw, receipts: [receipt('gemini', model, 'failed', [], error)] }, { status: upstream.status });
   }
-
   const output = raw.candidates?.[0]?.content?.parts?.map((part) => part.text || '').join('') || '';
   return json({ ok: true, provider: 'gemini', model, text: output, content: openAiBlocks(output), toolCalls: [], raw, receipts: [receipt('gemini', model, 'executed')] });
 }
@@ -259,7 +268,8 @@ export default {
       });
     }
     if (request.method === 'GET' && url.pathname === '/api/byok/models') return json({ ok: true, providers: Object.keys(MODEL_OPTIONS), modelOptions: MODEL_OPTIONS });
+    if (request.method === 'GET' && url.pathname === '/api/byok/chat') return chatHelp(env);
     if (request.method === 'POST' && url.pathname === '/api/byok/chat') return handleChat(request, env);
-    return json({ ok: false, error: 'not_found' }, { status: 404 });
+    return json({ ok: false, error: 'not_found', path: url.pathname, method: request.method, available: ['GET /health', 'GET /api/byok/models', 'GET /api/byok/chat', 'POST /api/byok/chat'] }, { status: 404 });
   }
 };
