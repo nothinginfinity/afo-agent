@@ -1,4 +1,4 @@
-const BUILD_ID = 'byok-mcp-registry-fallback-2026-06-21-01';
+const BUILD_ID = 'byok-d1-registry-2026-06-21-01';
 const DEFAULT_MCP_URL = 'https://afo-agent-gateway.jaredtechfit.workers.dev/mcp';
 const DEFAULT_ANTHROPIC_VERSION = '2023-06-01';
 
@@ -215,7 +215,22 @@ function filterRegistryTools(tools, capability, riskMax) {
   });
 }
 
-async function registrySearchFallback(gatewayBase, headers, body) {
+async function registrySearchD1(env, body) {
+  if (!env.AFO_DB) return { ok: false, status: 0, data: { ok: false, error: 'd1_binding_missing' } };
+  try {
+    const res = await env.AFO_DB.prepare('SELECT manifest_json FROM tools ORDER BY id').all();
+    const rows = res.results || [];
+    const tools = rows.map((row) => JSON.parse(row.manifest_json)).filter(Boolean);
+    const filtered = filterRegistryTools(tools, body.capability, body.riskMax);
+    return { ok: true, status: 200, data: { ok: true, route: 'D1 tools table', tools: filtered.length ? filtered : tools.slice(0, 25), raw: { totalTools: tools.length, filteredTools: filtered.length } } };
+  } catch (error) {
+    return { ok: false, status: 500, data: { ok: false, error: 'd1_registry_search_failed', message: error.message || String(error) } };
+  }
+}
+
+async function registrySearchFallback(env, gatewayBase, headers, body) {
+  const directD1 = await registrySearchD1(env, body);
+  if (directD1.ok) return directD1;
   const attempts = [];
   const postSearch = await afoFetchJson(`${gatewayBase}/registry/search`, { method: 'POST', headers, body: JSON.stringify(body) });
   attempts.push({ route: 'POST /registry/search', status: postSearch.status, ok: postSearch.ok });
@@ -249,7 +264,7 @@ async function executeAfoFunction(name, args, input, env, request) {
 
   if (name === 'afo_registry_search') {
     const body = { capability: parsed.capability || input.toolSearch || 'github cloudflare approvals', riskMax: parsed.riskMax || input.riskMax || 'read' };
-    return registrySearchFallback(gatewayBase, headers, body);
+    return registrySearchFallback(env, gatewayBase, headers, body);
   }
 
   if (name === 'afo_registry_inspect') {
