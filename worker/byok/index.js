@@ -1,4 +1,4 @@
-const BUILD_ID = 'byok-providers-check-2026-06-21-01';
+const BUILD_ID = 'byok-thread-crud-2026-06-21-01';
 const DEFAULT_MCP_URL = 'https://afo-agent-gateway.jaredtechfit.workers.dev/mcp';
 const DEFAULT_ANTHROPIC_VERSION = '2023-06-01';
 
@@ -292,6 +292,132 @@ async function handleToolCheck(request, env) {
   return json({ ok: true, buildId: BUILD_ID, source: result.ok ? 'D1 tools table' : 'unavailable', capability, summary, checks });
 }
 
+function dbRequired(env) {
+  if (!env.AFO_DB) {
+    const error = new Error('AFO_DB binding missing');
+    error.status = 503;
+    throw error;
+  }
+  return env.AFO_DB;
+}
+
+function threadIdFromPath(pathname) {
+  const match = /^\/api\/byok\/threads\/([^/]+)$/.exec(pathname);
+  return match ? decodeURIComponent(match[1]) : '';
+}
+
+function threadJson(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    title: row.title,
+    provider: row.provider,
+    model: row.model,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    status: row.status,
+    token_count: row.token_count || 0
+  };
+}
+
+function messageJson(row) {
+  let content = null;
+  try { content = row.content_json ? JSON.parse(row.content_json) : null; } catch { content = row.content_json; }
+  return {
+    id: row.id,
+    thread_id: row.thread_id,
+    role: row.role,
+    content,
+    parent_id: row.parent_id,
+    tokens_in: row.tokens_in,
+    tokens_out: row.tokens_out,
+    compacted: !!row.compacted,
+    archive_url: row.archive_url,
+    created_at: row.created_at
+  };
+}
+
+function safeThreadStatus(status) {
+  const value = String(status || 'active').toLowerCase();
+  return ['active', 'archived', 'deleted'].includes(value) ? value : 'active';
+}
+
+async function handleListThreads(request, env) {
+  try {
+    const db = dbRequired(env);
+    const url = new URL(request.url);
+    const limit = Math.max(1, Math.min(Number(url.searchParams.get('limit') || 20), 100));
+    const offset = Math.max(0, Number(url.searchParams.get('offset') || 0));
+    const includeDeleted = url.searchParams.get('include_deleted') === '1';
+    const where = includeDeleted ? '1 = 1' : "status != 'deleted'";
+    const rows = await db.prepare(`SELECT id, title, provider, model, created_at, updated_at, status, token_count FROM byok_threads WHERE ${where} ORDER BY updated_at DESC LIMIT ? OFFSET ?`).bind(limit, offset).all();
+    return json({ ok: true, buildId: BUILD_ID, threads: (rows.results || []).map(threadJson), page: { limit, offset, next_offset: (rows.results || []).length === limit ? offset + limit : null } });
+  } catch (error) {
+    return json({ ok: false, buildId: BUILD_ID, error: error.message || String(error) }, { status: error.status || 500 });
+  }
+}
+
+async function handleCreateThread(request, env) {
+  try {
+    const db = dbRequired(env);
+    const input = await readJson(request);
+    const now = Date.now();
+    const id = crypto.randomUUID();
+    const title = String(input.title || 'New BYOK thread').slice(0, 240);
+    const provider = input.provider ? String(input.provider).slice(0, 80) : null;
+    const model = input.model ? String(input.model).slice(0, 160) : null;
+    await db.prepare('INSERT INTO byok_threads (id, title, provider, model, created_at, updated_at, status, token_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind(id, title, provider, model, now, now, 'active', 0).run();
+    const row = await db.prepare('SELECT id, title, provider, model, created_at, updated_at, status, token_count FROM byok_threads WHERE id = ?').bind(id).first();
+    return json({ ok: true, buildId: BUILD_ID, thread: threadJson(row) }, { status: 201 });
+  } catch (error) {
+    return json({ ok: false, buildId: BUILD_ID, error: error.message || String(error) }, { status: error.status || 500 });
+  }
+}
+
+async function handleGetThread(threadId, env) {
+  try {
+    const db = dbRequired(env);
+    const thread = await db.prepare('SELECT id, title, provider, model, created_at, updated_at, status, token_count FROM byok_threads WHERE id = ?').bind(threadId).first();
+    if (!thread || thread.status === 'deleted') return json({ ok: false, buildId: BUILD_ID, error: 'thread_not_found', threadId }, { status: 404 });
+    const messages = await db.prepare('SELECT id, thread_id, role, content_json, parent_id, tokens_in, tokens_out, compacted, archive_url, created_at FROM byok_messages WHERE thread_id = ? ORDER BY created_at ASC').bind(threadId).all();
+    return json({ ok: true, buildId: BUILD_ID, thread: threadJson(thread), messages: (messages.results || []).map(messageJson) });
+  } catch (error) {
+    return json({ ok: false, buildId: BUILD_ID, error: error.message || String(error) }, { status: error.status || 500 });
+  }
+}
+
+async function handlePatchThread(threadId, request, env) {
+  try {
+    const db = dbRequired(env);
+    const input = await readJson(request);
+    const existing = await db.prepare('SELECT id, title, provider, model, created_at, updated_at, status, token_count FROM byok_threads WHERE id = ?').bind(threadId).first();
+    if (!existing || existing.status === 'deleted') return json({ ok: false, buildId: BUILD_ID, error: 'thread_not_found', threadId }, { status: 404 });
+    const title = input.title === undefined ? existing.title : String(input.title || '').slice(0, 240);
+    const provider = input.provider === undefined ? existing.provider : (input.provider ? String(input.provider).slice(0, 80) : null);
+    const model = input.model === undefined ? existing.model : (input.model ? String(input.model).slice(0, 160) : null);
+    const status = input.status === undefined ? existing.status : safeThreadStatus(input.status);
+    const now = Date.now();
+    await db.prepare('UPDATE byok_threads SET title = ?, provider = ?, model = ?, status = ?, updated_at = ? WHERE id = ?').bind(title, provider, model, status, now, threadId).run();
+    const row = await db.prepare('SELECT id, title, provider, model, created_at, updated_at, status, token_count FROM byok_threads WHERE id = ?').bind(threadId).first();
+    return json({ ok: true, buildId: BUILD_ID, thread: threadJson(row) });
+  } catch (error) {
+    return json({ ok: false, buildId: BUILD_ID, error: error.message || String(error) }, { status: error.status || 500 });
+  }
+}
+
+async function handleDeleteThread(threadId, env) {
+  try {
+    const db = dbRequired(env);
+    const existing = await db.prepare('SELECT id FROM byok_threads WHERE id = ? AND status != ?').bind(threadId, 'deleted').first();
+    if (!existing) return json({ ok: false, buildId: BUILD_ID, error: 'thread_not_found', threadId }, { status: 404 });
+    const now = Date.now();
+    await db.prepare('UPDATE byok_threads SET status = ?, updated_at = ? WHERE id = ?').bind('deleted', now, threadId).run();
+    return json({ ok: true, buildId: BUILD_ID, deleted: true, threadId });
+  } catch (error) {
+    return json({ ok: false, buildId: BUILD_ID, error: error.message || String(error) }, { status: error.status || 500 });
+  }
+}
+
 function chatHelp(env) {
   return json({
     ok: true,
@@ -303,6 +429,13 @@ function chatHelp(env) {
     modelOptions: MODEL_OPTIONS,
     providerCapabilities: providerCapabilities(),
     mcpUrl: env.AFO_MCP_URL || DEFAULT_MCP_URL,
+    threadEndpoints: {
+      list: 'GET /api/byok/threads?limit=20&offset=0',
+      create: 'POST /api/byok/threads',
+      read: 'GET /api/byok/threads/:id',
+      update: 'PATCH /api/byok/threads/:id',
+      delete: 'DELETE /api/byok/threads/:id'
+    },
     example: { provider: 'openai', model: MODEL_OPTIONS.openai[0], providerKey: 'request-only-token', prompt: 'Hello', maxTokens: 500 }
   });
 }
@@ -420,8 +553,14 @@ export default {
     if (request.method === 'GET' && url.pathname === '/api/byok/providers/check') return providersCheck();
     if (request.method === 'GET' && url.pathname === '/api/byok/selftest') return handleSelfTest(request, env);
     if (request.method === 'GET' && url.pathname === '/api/byok/tools/check') return handleToolCheck(request, env);
+    if (url.pathname === '/api/byok/threads' && request.method === 'GET') return handleListThreads(request, env);
+    if (url.pathname === '/api/byok/threads' && request.method === 'POST') return handleCreateThread(request, env);
+    const threadId = threadIdFromPath(url.pathname);
+    if (threadId && request.method === 'GET') return handleGetThread(threadId, env);
+    if (threadId && request.method === 'PATCH') return handlePatchThread(threadId, request, env);
+    if (threadId && request.method === 'DELETE') return handleDeleteThread(threadId, env);
     if (request.method === 'GET' && url.pathname === '/api/byok/chat') return chatHelp(env);
     if (request.method === 'POST' && url.pathname === '/api/byok/chat') return handleChat(request, env);
-    return json({ ok: false, buildId: BUILD_ID, error: 'not_found', path: url.pathname, method: request.method, available: ['GET /', 'GET /app', 'GET /health', 'GET /api/byok/models', 'GET /api/byok/providers/check', 'GET /api/byok/selftest', 'GET /api/byok/tools/check', 'GET /api/byok/chat', 'POST /api/byok/chat'] }, { status: 404 });
+    return json({ ok: false, buildId: BUILD_ID, error: 'not_found', path: url.pathname, method: request.method, available: ['GET /', 'GET /app', 'GET /health', 'GET /api/byok/models', 'GET /api/byok/providers/check', 'GET /api/byok/selftest', 'GET /api/byok/tools/check', 'GET /api/byok/threads', 'POST /api/byok/threads', 'GET /api/byok/threads/:id', 'PATCH /api/byok/threads/:id', 'DELETE /api/byok/threads/:id', 'GET /api/byok/chat', 'POST /api/byok/chat'] }, { status: 404 });
   }
 };
