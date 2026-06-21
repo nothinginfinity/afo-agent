@@ -1,4 +1,4 @@
-const BUILD_ID = 'byok-ui-fix-2026-06-21-01';
+const BUILD_ID = 'byok-native-tools-2026-06-21-01';
 const DEFAULT_MCP_URL = 'https://afo-agent-gateway.jaredtechfit.workers.dev/mcp';
 const DEFAULT_ANTHROPIC_VERSION = '2023-06-01';
 
@@ -41,6 +41,45 @@ const OPENAI_COMPATIBLE = {
   cerebras: { label: 'Cerebras', endpoint: 'https://api.cerebras.ai/v1/chat/completions', defaultModel: 'llama3.1-8b' }
 };
 
+const AFO_FUNCTION_DECLARATIONS = [
+  {
+    name: 'afo_registry_search',
+    description: 'Search the AFO Agent Gateway tool registry for available tools by capability and risk level.',
+    parameters: {
+      type: 'object',
+      properties: {
+        capability: { type: 'string', description: 'Search phrase such as github, cloudflare, approvals, receipts, registry, deploy.' },
+        riskMax: { type: 'string', enum: ['read', 'network', 'write', 'money', 'destructive'], description: 'Maximum risk level. Default read.' }
+      },
+      required: ['capability']
+    }
+  },
+  {
+    name: 'afo_registry_inspect',
+    description: 'Inspect one AFO tool manifest by tool id.',
+    parameters: {
+      type: 'object',
+      properties: {
+        toolId: { type: 'string', description: 'AFO tool id, for example github.repo.inspect.' }
+      },
+      required: ['toolId']
+    }
+  },
+  {
+    name: 'afo_agent_invoke',
+    description: 'Invoke an AFO Agent Gateway tool through the lead agent. Use only when the user explicitly wants the tool run.',
+    parameters: {
+      type: 'object',
+      properties: {
+        toolId: { type: 'string', description: 'AFO tool id to invoke.' },
+        purpose: { type: 'string', description: 'Short reason for invoking the tool.' },
+        input: { type: 'object', description: 'Tool input JSON.' }
+      },
+      required: ['toolId', 'purpose']
+    }
+  }
+];
+
 function cors() {
   return {
     'access-control-allow-origin': '*',
@@ -72,11 +111,7 @@ function html(data, init = {}) {
 }
 
 async function readJson(request) {
-  try {
-    return await request.json();
-  } catch {
-    return {};
-  }
+  try { return await request.json(); } catch { return {}; }
 }
 
 function required(value, name) {
@@ -90,6 +125,24 @@ function getCredential(input, request) {
 
 function getAfoRoleToken(input, env, request) {
   return input.afoRoleToken || request.headers.get('x-afo-role-token') || env.AFO_AGENT_READ_TOKEN || '';
+}
+
+function getGatewayBase(input, env) {
+  const mcpUrl = input.mcpUrl || env.AFO_MCP_URL || DEFAULT_MCP_URL;
+  return mcpUrl.replace(/\/mcp\/?$/, '');
+}
+
+function authHeaders(token) {
+  return token ? { authorization: `Bearer ${token}` } : {};
+}
+
+function safeArgs(args) {
+  if (!args) return {};
+  if (typeof args === 'string') {
+    try { return JSON.parse(args); } catch { return {}; }
+  }
+  if (typeof args === 'object') return args;
+  return {};
 }
 
 function textFromOpenAi(raw) {
@@ -111,26 +164,49 @@ function extractToolCalls(content) {
   return calls;
 }
 
+async function afoFetchJson(url, options) {
+  const response = await fetch(url, options);
+  const data = await response.json().catch(() => ({}));
+  return { ok: response.ok, status: response.status, data };
+}
+
+async function executeAfoFunction(name, args, input, env, request) {
+  const gatewayBase = getGatewayBase(input, env);
+  const token = getAfoRoleToken(input, env, request);
+  const headers = { 'content-type': 'application/json', ...authHeaders(token) };
+  const parsed = safeArgs(args);
+
+  if (name === 'afo_registry_search') {
+    const body = { capability: parsed.capability || input.toolSearch || 'github cloudflare approvals', riskMax: parsed.riskMax || input.riskMax || 'read' };
+    return afoFetchJson(`${gatewayBase}/registry/search`, { method: 'POST', headers, body: JSON.stringify(body) });
+  }
+
+  if (name === 'afo_registry_inspect') {
+    const toolId = required(parsed.toolId, 'toolId');
+    return afoFetchJson(`${gatewayBase}/registry/tools/${encodeURIComponent(toolId)}`, { method: 'GET', headers });
+  }
+
+  if (name === 'afo_agent_invoke') {
+    if (!input.allowAfoInvoke) {
+      return { ok: false, status: 403, data: { ok: false, error: 'afo_agent_invoke_requires_allowAfoInvoke_true' } };
+    }
+    const body = { toolId: required(parsed.toolId, 'toolId'), purpose: parsed.purpose || 'BYOK model requested AFO tool invocation', input: parsed.input || {} };
+    return afoFetchJson(`${gatewayBase}/agent/agent.afo.lead/invoke`, { method: 'POST', headers, body: JSON.stringify(body) });
+  }
+
+  return { ok: false, status: 400, data: { ok: false, error: `unknown_afo_function:${name}` } };
+}
+
 async function getAfoToolContext(input, env, request) {
   if (input.includeAfoContext === false) return '';
-  const mcpUrl = input.mcpUrl || env.AFO_MCP_URL || DEFAULT_MCP_URL;
-  const gatewayBase = mcpUrl.replace(/\/mcp\/?$/, '');
-  const token = getAfoRoleToken(input, env, request);
   try {
-    const response = await fetch(`${gatewayBase}/registry/search`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        ...(token ? { authorization: `Bearer ${token}` } : {})
-      },
-      body: JSON.stringify({ capability: input.toolSearch || input.prompt || 'github cloudflare approvals', riskMax: input.riskMax || 'read' })
-    });
-    const data = await response.json().catch(() => ({}));
-    const tools = Array.isArray(data.tools) ? data.tools : Array.isArray(data.matches) ? data.matches : [];
+    const result = await executeAfoFunction('afo_registry_search', { capability: input.toolSearch || input.prompt || 'github cloudflare approvals', riskMax: input.riskMax || 'read' }, input, env, request);
+    const data = result.data || {};
+    const tools = Array.isArray(data.tools) ? data.tools : Array.isArray(data.matches) ? data.matches : Array.isArray(data.result) ? data.result : [];
     const summary = tools.slice(0, 20).map((tool) => `${tool.id || tool.name}: ${tool.description || ''}`).join('\n');
-    return summary ? `AFO Gateway MCP URL: ${mcpUrl}\nAvailable AFO tools:\n${summary}` : `AFO Gateway MCP URL: ${mcpUrl}`;
+    return summary ? `AFO Gateway tools available:\n${summary}` : `AFO Gateway MCP URL: ${input.mcpUrl || env.AFO_MCP_URL || DEFAULT_MCP_URL}`;
   } catch {
-    return `AFO Gateway MCP URL: ${mcpUrl}`;
+    return `AFO Gateway MCP URL: ${input.mcpUrl || env.AFO_MCP_URL || DEFAULT_MCP_URL}`;
   }
 }
 
@@ -138,13 +214,21 @@ function receipt(provider, model, status, toolIds = [], error) {
   return { id: crypto.randomUUID(), provider, model, status, toolIds, approvalIds: [], error, createdAt: new Date().toISOString() };
 }
 
+function openAiTools() {
+  return AFO_FUNCTION_DECLARATIONS.map((fn) => ({ type: 'function', function: fn }));
+}
+
+function geminiTools() {
+  return [{ functionDeclarations: AFO_FUNCTION_DECLARATIONS }];
+}
+
 function appHtml(env) {
   const boot = JSON.stringify({ buildId: BUILD_ID, providers: Object.keys(MODEL_OPTIONS), modelOptions: MODEL_OPTIONS, labels: PROVIDER_LABELS, mcpUrl: env.AFO_MCP_URL || DEFAULT_MCP_URL }).replace(/</g, '\\u003c');
-  return html(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AFO BYOK Agent Gateway</title><style>body{margin:0;background:#070b12;color:#eaf1ff;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif}main{max-width:980px;margin:0 auto;padding:24px 14px}h1{font-size:34px;margin:0 0 8px}.muted{color:#9fb2d5;line-height:1.5}.grid{display:grid;grid-template-columns:360px 1fr;gap:14px}@media(max-width:820px){.grid{grid-template-columns:1fr}}.card{background:#0d1525;border:1px solid #253a5d;border-radius:18px;padding:16px}label{display:block;margin:11px 0 5px;color:#c1d1ed;font-size:13px;font-weight:700}select,input,textarea,button{width:100%;box-sizing:border-box;background:#07101e;color:#f6f9ff;border:1px solid #30486d;border-radius:11px;padding:10px;font:inherit}textarea{min-height:150px}button{margin-top:12px;border:0;background:#377dff;font-weight:800;cursor:pointer}.links{display:flex;gap:12px;flex-wrap:wrap;margin:12px 0 18px}a{color:#9cc7ff}.error{background:#3b1019;border:1px solid #8a3143;border-radius:12px;padding:12px;white-space:pre-wrap}.text{white-space:pre-wrap;line-height:1.6}pre{white-space:pre-wrap;word-break:break-word;background:#050a12;border:1px solid #243a5e;border-radius:12px;padding:12px;overflow:auto}summary{cursor:pointer;color:#9cc7ff;font-weight:800}</style></head><body><main><h1>AFO BYOK Agent Gateway</h1><p class="muted">Choose a provider and model, paste a BYOK token for this request, and route through AFO Agent Gateway. Build ${BUILD_ID}</p><div class="links"><a href="/health">Health</a><a href="/api/byok/models">Models</a><a href="/api/byok/chat">Chat help</a></div><div class="grid"><div class="card"><form id="f"><label>Provider</label><select id="provider"></select><label>Model preset</label><select id="preset"></select><label>Model ID</label><input id="model"><div id="baseBox" style="display:none"><label>Base URL</label><input id="baseUrl" placeholder="https://provider.example/v1"></div><label>BYOK token</label><input id="token" type="password" autocomplete="off"><label>AFO role token</label><input id="afo" type="password" autocomplete="off" placeholder="optional"><label>Prompt</label><textarea id="prompt">Search AFO Agent Gateway for GitHub tools and summarize what I can do next.</textarea><button id="send">Send</button></form></div><div class="card"><div id="out" class="muted">Ready.</div></div></div></main><script id="boot" type="application/json">${boot}</script><script>const BOOT=JSON.parse(document.getElementById('boot').textContent);const provider=document.getElementById('provider'),preset=document.getElementById('preset'),model=document.getElementById('model'),baseBox=document.getElementById('baseBox'),out=document.getElementById('out'),send=document.getElementById('send');function e(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}function pre(t,o){return '<details open><summary>'+e(t)+'</summary><pre>'+e(JSON.stringify(o,null,2))+'</pre></details>'}function fillProviders(){provider.innerHTML=BOOT.providers.map(function(p){return '<option value="'+e(p)+'">'+e(BOOT.labels[p]||p)+'</option>'}).join('');provider.value='anthropic';fillModels()}function fillModels(){const p=provider.value,ms=BOOT.modelOptions[p]||['custom-model'];preset.innerHTML=ms.map(function(m){return '<option value="'+e(m)+'">'+e(m)+'</option>'}).join('')+'<option value="custom">Custom model ID</option>';model.value=ms[0];baseBox.style.display=p==='openai-compatible'?'block':'none'}provider.onchange=fillModels;preset.onchange=function(){if(preset.value!=='custom')model.value=preset.value};document.getElementById('f').onsubmit=async function(ev){ev.preventDefault();send.disabled=true;out.className='muted';out.textContent='Running...';const payload={provider:provider.value,model:model.value,baseUrl:document.getElementById('baseUrl').value,providerKey:document.getElementById('token').value,afoRoleToken:document.getElementById('afo').value,prompt:document.getElementById('prompt').value,maxTokens:1000};try{const r=await fetch('/api/byok/chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});const d=await r.json();if(!r.ok||d.ok===false)throw new Error(d.error||'Request failed');const text=d.text||(Array.isArray(d.content)?d.content.filter(function(b){return b.type==='text'}).map(function(b){return b.text}).join('\\n\\n'):'');out.className='';out.innerHTML=(text?'<div class="text">'+e(text)+'</div>':'<div class="muted">No text returned.</div>')+pre('Tool calls',d.toolCalls||[])+pre('Receipts',d.receipts||[])+pre('Raw',d.raw||d)}catch(err){out.className='error';out.textContent=err.message||String(err)}finally{send.disabled=false}};fillProviders();</script></body></html>`);
+  return html(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AFO BYOK Agent Gateway</title><style>body{margin:0;background:#070b12;color:#eaf1ff;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif}main{max-width:980px;margin:0 auto;padding:24px 14px}h1{font-size:34px;margin:0 0 8px}.muted{color:#9fb2d5;line-height:1.5}.grid{display:grid;grid-template-columns:360px 1fr;gap:14px}@media(max-width:820px){.grid{grid-template-columns:1fr}}.card{background:#0d1525;border:1px solid #253a5d;border-radius:18px;padding:16px}label{display:block;margin:11px 0 5px;color:#c1d1ed;font-size:13px;font-weight:700}select,input,textarea,button{width:100%;box-sizing:border-box;background:#07101e;color:#f6f9ff;border:1px solid #30486d;border-radius:11px;padding:10px;font:inherit}textarea{min-height:150px}button{margin-top:12px;border:0;background:#377dff;font-weight:800;cursor:pointer}.links{display:flex;gap:12px;flex-wrap:wrap;margin:12px 0 18px}a{color:#9cc7ff}.error{background:#3b1019;border:1px solid #8a3143;border-radius:12px;padding:12px;white-space:pre-wrap}.text{white-space:pre-wrap;line-height:1.6}pre{white-space:pre-wrap;word-break:break-word;background:#050a12;border:1px solid #243a5e;border-radius:12px;padding:12px;overflow:auto}summary{cursor:pointer;color:#9cc7ff;font-weight:800}.check{display:flex;gap:8px;align-items:center}.check input{width:auto}</style></head><body><main><h1>AFO BYOK Agent Gateway</h1><p class="muted">Choose a provider and model, paste a BYOK token for this request, and route through AFO Agent Gateway. Build ${BUILD_ID}</p><div class="links"><a href="/health">Health</a><a href="/api/byok/models">Models</a><a href="/api/byok/chat">Chat help</a></div><div class="grid"><div class="card"><form id="f"><label>Provider</label><select id="provider"></select><label>Model preset</label><select id="preset"></select><label>Model ID</label><input id="model"><div id="baseBox" style="display:none"><label>Base URL</label><input id="baseUrl" placeholder="https://provider.example/v1"></div><label>BYOK token</label><input id="token" type="password" autocomplete="off"><label>AFO role token</label><input id="afo" type="password" autocomplete="off" placeholder="optional"><label class="check"><input id="nativeTools" type="checkbox" checked> Enable native AFO tool calls where supported</label><label class="check"><input id="allowInvoke" type="checkbox"> Allow model to invoke AFO tools beyond registry search/inspect</label><label>Prompt</label><textarea id="prompt">Search AFO Agent Gateway for GitHub tools, inspect the most relevant one, and summarize what I can do next.</textarea><button id="send">Send</button></form></div><div class="card"><div id="out" class="muted">Ready.</div></div></div></main><script id="boot" type="application/json">${boot}</script><script>const BOOT=JSON.parse(document.getElementById('boot').textContent);const provider=document.getElementById('provider'),preset=document.getElementById('preset'),model=document.getElementById('model'),baseBox=document.getElementById('baseBox'),out=document.getElementById('out'),send=document.getElementById('send');function e(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}function pre(t,o){return '<details open><summary>'+e(t)+'</summary><pre>'+e(JSON.stringify(o,null,2))+'</pre></details>'}function fillProviders(){provider.innerHTML=BOOT.providers.map(function(p){return '<option value="'+e(p)+'">'+e(BOOT.labels[p]||p)+'</option>'}).join('');provider.value='anthropic';fillModels()}function fillModels(){const p=provider.value,ms=BOOT.modelOptions[p]||['custom-model'];preset.innerHTML=ms.map(function(m){return '<option value="'+e(m)+'">'+e(m)+'</option>'}).join('')+'<option value="custom">Custom model ID</option>';model.value=ms[0];baseBox.style.display=p==='openai-compatible'?'block':'none'}provider.onchange=fillModels;preset.onchange=function(){if(preset.value!=='custom')model.value=preset.value};document.getElementById('f').onsubmit=async function(ev){ev.preventDefault();send.disabled=true;out.className='muted';out.textContent='Running...';const payload={provider:provider.value,model:model.value,baseUrl:document.getElementById('baseUrl').value,providerKey:document.getElementById('token').value,afoRoleToken:document.getElementById('afo').value,prompt:document.getElementById('prompt').value,maxTokens:1000,nativeTools:document.getElementById('nativeTools').checked,allowAfoInvoke:document.getElementById('allowInvoke').checked};try{const r=await fetch('/api/byok/chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});const d=await r.json();if(!r.ok||d.ok===false)throw new Error(d.error||'Request failed');const text=d.text||(Array.isArray(d.content)?d.content.filter(function(b){return b.type==='text'}).map(function(b){return b.text}).join('\\n\\n'):'');out.className='';out.innerHTML=(text?'<div class="text">'+e(text)+'</div>':'<div class="muted">No text returned.</div>')+pre('Native AFO calls',d.afoCalls||[])+pre('Tool calls',d.toolCalls||[])+pre('Receipts',d.receipts||[])+pre('Raw',d.raw||d)}catch(err){out.className='error';out.textContent=err.message||String(err)}finally{send.disabled=false}};fillProviders();</script></body></html>`);
 }
 
 function chatHelp(env) {
-  return json({ ok: true, buildId: BUILD_ID, endpoint: '/api/byok/chat', method: 'POST', message: 'Send a POST request with JSON to run a BYOK chat request.', supportedProviders: Object.keys(MODEL_OPTIONS), modelOptions: MODEL_OPTIONS, mcpUrl: env.AFO_MCP_URL || DEFAULT_MCP_URL, example: { provider: 'anthropic', model: MODEL_OPTIONS.anthropic[0], providerKey: 'paste-provider-token-in-ui-or-send-authorization-bearer', afoRoleToken: 'optional-afo-role-token', prompt: 'Search AFO Agent Gateway for GitHub tools.', maxTokens: 1000 } });
+  return json({ ok: true, buildId: BUILD_ID, endpoint: '/api/byok/chat', method: 'POST', message: 'Send a POST request with JSON to run a BYOK chat request.', supportedProviders: Object.keys(MODEL_OPTIONS), modelOptions: MODEL_OPTIONS, nativeTools: { openai: true, chatgpt: true, gemini: true, note: 'afo_agent_invoke requires allowAfoInvoke=true; registry search and inspect are available when nativeTools=true.' }, mcpUrl: env.AFO_MCP_URL || DEFAULT_MCP_URL, example: { provider: 'openai', model: MODEL_OPTIONS.openai[0], providerKey: 'paste-provider-token-in-ui-or-send-authorization-bearer', afoRoleToken: 'optional-afo-role-token', nativeTools: true, allowAfoInvoke: false, prompt: 'Search AFO Agent Gateway for GitHub tools and inspect the most relevant one.', maxTokens: 1000 } });
 }
 
 async function callAnthropic(input, env, request) {
@@ -161,11 +245,11 @@ async function callAnthropic(input, env, request) {
   const raw = await upstream.json().catch(() => ({}));
   if (!upstream.ok) {
     const error = raw.error?.message || `Anthropic API error ${upstream.status}`;
-    return json({ ok: false, provider: 'anthropic', model, error, raw, receipts: [receipt('anthropic', model, 'failed', [], error)] }, { status: upstream.status });
+    return json({ ok: false, buildId: BUILD_ID, provider: 'anthropic', model, error, raw, receipts: [receipt('anthropic', model, 'failed', [], error)] }, { status: upstream.status });
   }
   const content = Array.isArray(raw.content) ? raw.content : [];
   const toolCalls = extractToolCalls(content);
-  return json({ ok: true, provider: 'anthropic', model, content, toolCalls, raw, receipts: [receipt('anthropic', model, 'executed', toolCalls.map((call) => call.name).filter(Boolean))] });
+  return json({ ok: true, buildId: BUILD_ID, provider: 'anthropic', model, content, toolCalls, raw, afoCalls: [], receipts: [receipt('anthropic', model, 'executed', toolCalls.map((call) => call.name).filter(Boolean))] });
 }
 
 async function callOpenAiCompatible(input, env, request, provider) {
@@ -176,16 +260,50 @@ async function callOpenAiCompatible(input, env, request, provider) {
   const prompt = required(input.prompt, 'prompt');
   const afoContext = await getAfoToolContext(input, env, request);
   const messages = [];
-  if (afoContext) messages.push({ role: 'system', content: `You are connected to the AFO Agent Gateway context. Use this context to recommend or describe AFO tools. Direct remote MCP execution is currently enabled for Anthropic; this provider uses context bridging until native tool execution is added.\n\n${afoContext}` });
+  if (afoContext) messages.push({ role: 'system', content: `You can use AFO tools to answer. Prefer registry search/inspect first. Do not invoke write/deploy tools unless the user explicitly asks.\n\n${afoContext}` });
   messages.push({ role: 'user', content: prompt });
-  const upstream = await fetch(config.endpoint, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${credential}` }, body: JSON.stringify({ model, messages, max_tokens: Math.max(1, Math.min(Number(input.maxTokens || 1000), 8000)), temperature: typeof input.temperature === 'number' ? input.temperature : undefined }) });
-  const raw = await upstream.json().catch(() => ({}));
+  const body = { model, messages, max_tokens: Math.max(1, Math.min(Number(input.maxTokens || 1000), 8000)), temperature: typeof input.temperature === 'number' ? input.temperature : undefined };
+  if (input.nativeTools !== false) body.tools = openAiTools();
+  const upstream = await fetch(config.endpoint, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${credential}` }, body: JSON.stringify(body) });
+  const first = await upstream.json().catch(() => ({}));
   if (!upstream.ok) {
-    const error = raw.error?.message || raw.message || `${config.label} API error ${upstream.status}`;
-    return json({ ok: false, provider, model, error, raw, receipts: [receipt(provider, model, 'failed', [], error)] }, { status: upstream.status });
+    const error = first.error?.message || first.message || `${config.label} API error ${upstream.status}`;
+    return json({ ok: false, buildId: BUILD_ID, provider, model, error, raw: first, receipts: [receipt(provider, model, 'failed', [], error)] }, { status: upstream.status });
   }
-  const text = textFromOpenAi(raw);
-  return json({ ok: true, provider, model, text, content: textBlocks(text), toolCalls: [], raw, receipts: [receipt(provider, model, 'executed')] });
+  const choice = first.choices?.[0] || {};
+  const message = choice.message || {};
+  const calls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+  const afoCalls = [];
+  if (calls.length) {
+    messages.push(message);
+    for (const call of calls) {
+      const name = call.function?.name;
+      const args = call.function?.arguments || '{}';
+      const result = await executeAfoFunction(name, args, input, env, request);
+      afoCalls.push({ name, input: safeArgs(args), status: result.status, ok: result.ok, result: result.data });
+      messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result.data) });
+    }
+    const finalBody = { model, messages, max_tokens: Math.max(1, Math.min(Number(input.maxTokens || 1000), 8000)) };
+    const second = await fetch(config.endpoint, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${credential}` }, body: JSON.stringify(finalBody) });
+    const raw = await second.json().catch(() => ({}));
+    if (!second.ok) {
+      const error = raw.error?.message || raw.message || `${config.label} final response error ${second.status}`;
+      return json({ ok: false, buildId: BUILD_ID, provider, model, error, raw, afoCalls, receipts: [receipt(provider, model, 'failed', afoCalls.map((c) => c.name), error)] }, { status: second.status });
+    }
+    const text = textFromOpenAi(raw);
+    return json({ ok: true, buildId: BUILD_ID, provider, model, text, content: textBlocks(text), toolCalls: calls, afoCalls, raw, receipts: [receipt(provider, model, 'executed', afoCalls.map((c) => c.name))] });
+  }
+  const text = textFromOpenAi(first);
+  return json({ ok: true, buildId: BUILD_ID, provider, model, text, content: textBlocks(text), toolCalls: [], afoCalls, raw: first, receipts: [receipt(provider, model, 'executed')] });
+}
+
+function geminiText(raw) {
+  return raw.candidates?.[0]?.content?.parts?.map((part) => part.text || '').join('') || '';
+}
+
+function geminiFunctionCalls(raw) {
+  const parts = raw.candidates?.[0]?.content?.parts || [];
+  return parts.filter((part) => part.functionCall).map((part) => part.functionCall);
 }
 
 async function callGemini(input, env, request) {
@@ -195,14 +313,35 @@ async function callGemini(input, env, request) {
   const afoContext = await getAfoToolContext(input, env, request);
   const text = `${afoContext ? `AFO Gateway context:\n${afoContext}\n\n` : ''}${prompt}`;
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(credential)}`;
-  const upstream = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text }] }], generationConfig: { maxOutputTokens: Math.max(1, Math.min(Number(input.maxTokens || 1000), 8000)) } }) });
-  const raw = await upstream.json().catch(() => ({}));
+  const firstBody = { contents: [{ role: 'user', parts: [{ text }] }], generationConfig: { maxOutputTokens: Math.max(1, Math.min(Number(input.maxTokens || 1000), 8000)) } };
+  if (input.nativeTools !== false) firstBody.tools = geminiTools();
+  const upstream = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(firstBody) });
+  const first = await upstream.json().catch(() => ({}));
   if (!upstream.ok) {
-    const error = raw.error?.message || `Gemini API error ${upstream.status}`;
-    return json({ ok: false, provider: 'gemini', model, error, raw, receipts: [receipt('gemini', model, 'failed', [], error)] }, { status: upstream.status });
+    const error = first.error?.message || `Gemini API error ${upstream.status}`;
+    return json({ ok: false, buildId: BUILD_ID, provider: 'gemini', model, error, raw: first, receipts: [receipt('gemini', model, 'failed', [], error)] }, { status: upstream.status });
   }
-  const output = raw.candidates?.[0]?.content?.parts?.map((part) => part.text || '').join('') || '';
-  return json({ ok: true, provider: 'gemini', model, text: output, content: textBlocks(output), toolCalls: [], raw, receipts: [receipt('gemini', model, 'executed')] });
+  const calls = geminiFunctionCalls(first);
+  const afoCalls = [];
+  if (calls.length) {
+    const parts = [];
+    for (const call of calls) {
+      const result = await executeAfoFunction(call.name, call.args || {}, input, env, request);
+      afoCalls.push({ name: call.name, input: call.args || {}, status: result.status, ok: result.ok, result: result.data });
+      parts.push({ functionResponse: { name: call.name, response: result.data } });
+    }
+    const secondBody = { contents: [{ role: 'user', parts: [{ text }] }, { role: 'model', parts: calls.map((call) => ({ functionCall: call })) }, { role: 'function', parts }], generationConfig: { maxOutputTokens: Math.max(1, Math.min(Number(input.maxTokens || 1000), 8000)) }, tools: geminiTools() };
+    const finalRes = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(secondBody) });
+    const raw = await finalRes.json().catch(() => ({}));
+    if (!finalRes.ok) {
+      const error = raw.error?.message || `Gemini final response error ${finalRes.status}`;
+      return json({ ok: false, buildId: BUILD_ID, provider: 'gemini', model, error, raw, afoCalls, receipts: [receipt('gemini', model, 'failed', afoCalls.map((c) => c.name), error)] }, { status: finalRes.status });
+    }
+    const output = geminiText(raw);
+    return json({ ok: true, buildId: BUILD_ID, provider: 'gemini', model, text: output, content: textBlocks(output), toolCalls: calls, afoCalls, raw, receipts: [receipt('gemini', model, 'executed', afoCalls.map((c) => c.name))] });
+  }
+  const output = geminiText(first);
+  return json({ ok: true, buildId: BUILD_ID, provider: 'gemini', model, text: output, content: textBlocks(output), toolCalls: [], afoCalls, raw: first, receipts: [receipt('gemini', model, 'executed')] });
 }
 
 async function handleChat(request, env) {
@@ -212,9 +351,9 @@ async function handleChat(request, env) {
     if (provider === 'anthropic') return await callAnthropic(input, env, request);
     if (provider === 'gemini') return await callGemini(input, env, request);
     if (provider in OPENAI_COMPATIBLE || provider === 'openai-compatible') return await callOpenAiCompatible(input, env, request, provider);
-    return json({ ok: false, error: `provider_not_supported_yet:${provider}`, supported: Object.keys(MODEL_OPTIONS) }, { status: 400 });
+    return json({ ok: false, buildId: BUILD_ID, error: `provider_not_supported_yet:${provider}`, supported: Object.keys(MODEL_OPTIONS) }, { status: 400 });
   } catch (error) {
-    return json({ ok: false, error: error.message || String(error), buildId: BUILD_ID }, { status: 400 });
+    return json({ ok: false, buildId: BUILD_ID, error: error.message || String(error) }, { status: 400 });
   }
 }
 
@@ -223,7 +362,7 @@ export default {
     const url = new URL(request.url);
     if (request.method === 'OPTIONS') return new Response(null, { headers: cors() });
     if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/app')) return appHtml(env);
-    if (request.method === 'GET' && url.pathname === '/health') return json({ ok: true, buildId: BUILD_ID, name: 'afo-byok-agent-gateway', mode: 'ephemeral-provider-credential', supportedProviders: Object.keys(MODEL_OPTIONS), modelOptions: MODEL_OPTIONS, mcpUrl: env.AFO_MCP_URL || DEFAULT_MCP_URL, storesProviderCredentials: false, notes: { anthropic: 'remote MCP enabled', others: 'chat completions with AFO Gateway context bridge; native tool execution can be added per provider' } });
+    if (request.method === 'GET' && url.pathname === '/health') return json({ ok: true, buildId: BUILD_ID, name: 'afo-byok-agent-gateway', mode: 'ephemeral-provider-credential', supportedProviders: Object.keys(MODEL_OPTIONS), modelOptions: MODEL_OPTIONS, mcpUrl: env.AFO_MCP_URL || DEFAULT_MCP_URL, storesProviderCredentials: false, nativeToolAdapters: { anthropic: 'remote-mcp', openai: 'function-calling', chatgpt: 'function-calling', gemini: 'function-calling' } });
     if (request.method === 'GET' && url.pathname === '/api/byok/models') return json({ ok: true, buildId: BUILD_ID, providers: Object.keys(MODEL_OPTIONS), modelOptions: MODEL_OPTIONS });
     if (request.method === 'GET' && url.pathname === '/api/byok/chat') return chatHelp(env);
     if (request.method === 'POST' && url.pathname === '/api/byok/chat') return handleChat(request, env);
