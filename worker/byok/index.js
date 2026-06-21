@@ -278,6 +278,19 @@ async function registryInspectD1(env, toolId) {
   }
 }
 
+async function publicGithub(path) {
+  const response = await fetch(`https://api.github.com${path}`, { headers: { accept: 'application/vnd.github+json', 'user-agent': 'afo-byok-agent-gateway' } });
+  const text = await response.text();
+  let data;
+  try { data = JSON.parse(text); } catch { data = { text }; }
+  if (!response.ok) return { ok: false, status: response.status, data: { ok: false, error: data.message || `github_${response.status}`, raw: data } };
+  return { ok: true, status: response.status, data };
+}
+
+function repoPath(path) {
+  return String(path || '').split('/').map(encodeURIComponent).join('/');
+}
+
 async function registrySearchFallback(env, gatewayBase, headers, body) {
   const directD1 = await registrySearchD1(env, body);
   if (directD1.ok) return directD1;
@@ -325,6 +338,37 @@ async function executeAfoFunction(name, args, input, env, request) {
     if (rest.ok) return rest;
     const mcp = await afoMcpToolCall(input, env, request, 'registry.inspect', { toolId });
     return mcp.ok ? { ok: true, status: mcp.status, data: { ok: true, route: 'MCP tools/call registry.inspect', raw: mcp.data, tool: mcp.data?.output?.tool || mcp.data?.tool } } : directD1;
+  }
+
+  if (name === 'afo_github_repo_inspect') {
+    const owner = required(parsed.owner, 'owner');
+    const repo = required(parsed.repo, 'repo');
+    const result = await publicGithub(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`);
+    if (!result.ok) return result;
+    const r = result.data;
+    return { ok: true, status: result.status, data: { ok: true, route: 'Public GitHub repo inspect', repository: { id: r.id, full_name: r.full_name, private: r.private, visibility: r.visibility, description: r.description, default_branch: r.default_branch, html_url: r.html_url, stargazers_count: r.stargazers_count, forks_count: r.forks_count, open_issues_count: r.open_issues_count, pushed_at: r.pushed_at, updated_at: r.updated_at } } };
+  }
+
+  if (name === 'afo_github_file_read') {
+    const owner = required(parsed.owner, 'owner');
+    const repo = required(parsed.repo, 'repo');
+    const path = required(parsed.path, 'path');
+    const ref = parsed.ref ? `?ref=${encodeURIComponent(parsed.ref)}` : '';
+    const result = await publicGithub(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${repoPath(path)}${ref}`);
+    if (!result.ok) return result;
+    const f = result.data;
+    const content = f.encoding === 'base64' && typeof f.content === 'string' ? atob(f.content.replace(/\s/g, '')) : String(f.content || '');
+    return { ok: true, status: result.status, data: { ok: true, route: 'Public GitHub file read', file: { path: f.path, sha: f.sha, size: f.size, html_url: f.html_url, encoding: f.encoding, content: content.slice(0, 20000), truncated: content.length > 20000 } } };
+  }
+
+  if (name === 'afo_github_workflow_runs') {
+    const owner = required(parsed.owner, 'owner');
+    const repo = required(parsed.repo, 'repo');
+    const limit = Math.max(1, Math.min(Number(parsed.limit || 10), 30));
+    const result = await publicGithub(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions/runs?per_page=${limit}`);
+    if (!result.ok) return result;
+    const runs = Array.isArray(result.data.workflow_runs) ? result.data.workflow_runs : [];
+    return { ok: true, status: result.status, data: { ok: true, route: 'Public GitHub workflow runs', total_count: result.data.total_count || runs.length, runs: runs.map((run) => ({ id: run.id, name: run.name, status: run.status, conclusion: run.conclusion, head_branch: run.head_branch, head_sha: run.head_sha, event: run.event, run_started_at: run.run_started_at, updated_at: run.updated_at, html_url: run.html_url })).slice(0, limit) } };
   }
 
   if (name === 'afo_agent_invoke') {
