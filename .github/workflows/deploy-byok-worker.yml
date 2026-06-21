@@ -71,6 +71,11 @@ jobs:
           AFO_MCP_URL = "${{ steps.vars.outputs.mcp_url }}"
           DEFAULT_ANTHROPIC_MODEL = "${{ steps.vars.outputs.default_anthropic_model }}"
           ANTHROPIC_VERSION = "${{ steps.vars.outputs.anthropic_version }}"
+
+          [[d1_databases]]
+          binding = "AFO_DB"
+          database_name = "afo-agent-db"
+          database_id = "988f3f2c-5952-4eb7-8594-ccba55e72af2"
           EOF
       - name: Deploy BYOK Worker
         run: npx wrangler deploy --config wrangler.byok.toml
