@@ -1,4 +1,4 @@
-const BUILD_ID = 'byok-anthropic-second-tool-pass-2026-06-21-01';
+const BUILD_ID = 'byok-safe-read-tools-2026-06-21-01';
 const DEFAULT_MCP_URL = 'https://afo-agent-gateway.jaredtechfit.workers.dev/mcp';
 const DEFAULT_ANTHROPIC_VERSION = '2023-06-01';
 
@@ -63,6 +63,45 @@ const AFO_FUNCTION_DECLARATIONS = [
         toolId: { type: 'string', description: 'AFO tool id, for example github.repo.inspect.' }
       },
       required: ['toolId']
+    }
+  },
+  {
+    name: 'afo_github_repo_inspect',
+    description: 'Read safe metadata for a GitHub repository. Read-only.',
+    parameters: {
+      type: 'object',
+      properties: {
+        owner: { type: 'string', description: 'GitHub owner or organization.' },
+        repo: { type: 'string', description: 'GitHub repository name.' }
+      },
+      required: ['owner', 'repo']
+    }
+  },
+  {
+    name: 'afo_github_file_read',
+    description: 'Read one UTF-8 file from a GitHub repository. Read-only.',
+    parameters: {
+      type: 'object',
+      properties: {
+        owner: { type: 'string', description: 'GitHub owner or organization.' },
+        repo: { type: 'string', description: 'GitHub repository name.' },
+        path: { type: 'string', description: 'Repository file path.' },
+        ref: { type: 'string', description: 'Optional branch, tag, or SHA.' }
+      },
+      required: ['owner', 'repo', 'path']
+    }
+  },
+  {
+    name: 'afo_github_workflow_runs',
+    description: 'Read recent GitHub Actions workflow runs for a repository. Read-only.',
+    parameters: {
+      type: 'object',
+      properties: {
+        owner: { type: 'string', description: 'GitHub owner or organization.' },
+        repo: { type: 'string', description: 'GitHub repository name.' },
+        limit: { type: 'number', description: 'Maximum number of runs to return, default 10.' }
+      },
+      required: ['owner', 'repo']
     }
   },
   {
