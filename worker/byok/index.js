@@ -1,4 +1,4 @@
-const BUILD_ID = 'byok-safe-read-tools-2026-06-21-01';
+const BUILD_ID = 'byok-selftest-2026-06-21-01';
 const DEFAULT_MCP_URL = 'https://afo-agent-gateway.jaredtechfit.workers.dev/mcp';
 const DEFAULT_ANTHROPIC_VERSION = '2023-06-01';
 
@@ -569,6 +569,81 @@ async function callGemini(input, env, request) {
   return json({ ok: true, buildId: BUILD_ID, provider: 'gemini', model, text: output, content: textBlocks(output), toolCalls: [], afoCalls, raw: first, receipts: [receipt('gemini', model, 'executed')] });
 }
 
+function checkStatus(result) {
+  if (result?.ok) return 'callable';
+  if (result?.status === 401 || result?.status === 403) return 'needs_auth';
+  if (result?.status === 0) return 'not_configured';
+  return 'failed';
+}
+
+function summarizeChecks(checks) {
+  const summary = { total: checks.length, callable: 0, needs_auth: 0, not_configured: 0, failed: 0, skipped: 0 };
+  for (const check of checks) summary[check.status] = (summary[check.status] || 0) + 1;
+  return summary;
+}
+
+async function runSelfCheck(label, fn, args, input, env, request) {
+  const started = Date.now();
+  try {
+    const result = await executeAfoFunction(fn, args, input, env, request);
+    return { label, fn, status: checkStatus(result), httpStatus: result?.status || 0, ms: Date.now() - started, result: result?.data || null };
+  } catch (error) {
+    return { label, fn, status: 'failed', httpStatus: 0, ms: Date.now() - started, error: error.message || String(error) };
+  }
+}
+
+async function handleSelfTest(request, env) {
+  const url = new URL(request.url);
+  const owner = url.searchParams.get('owner') || 'nothinginfinity';
+  const repo = url.searchParams.get('repo') || 'afo-agent';
+  const filePath = url.searchParams.get('path') || 'package.json';
+  const input = { mcpUrl: env.AFO_MCP_URL || DEFAULT_MCP_URL, includeAfoContext: false, allowAfoInvoke: false, riskMax: 'read' };
+  const checks = [];
+  checks.push({ label: 'AFO_DB binding', fn: 'binding.AFO_DB', status: env.AFO_DB ? 'callable' : 'not_configured', httpStatus: env.AFO_DB ? 200 : 0, ms: 0, result: { present: !!env.AFO_DB } });
+  checks.push(await runSelfCheck('Registry search: github', 'afo_registry_search', { capability: 'github', riskMax: 'read' }, input, env, request));
+  checks.push(await runSelfCheck('Registry inspect: github.repo.inspect', 'afo_registry_inspect', { toolId: 'github.repo.inspect' }, input, env, request));
+  checks.push(await runSelfCheck('GitHub repo inspect', 'afo_github_repo_inspect', { owner, repo }, input, env, request));
+  checks.push(await runSelfCheck('GitHub file read', 'afo_github_file_read', { owner, repo, path: filePath }, input, env, request));
+  checks.push(await runSelfCheck('GitHub workflow runs', 'afo_github_workflow_runs', { owner, repo, limit: 5 }, input, env, request));
+  return json({ ok: checks.every((check) => check.status === 'callable'), buildId: BUILD_ID, target: { owner, repo, filePath }, summary: summarizeChecks(checks), checks });
+}
+
+function localImplementationForTool(toolId) {
+  const map = {
+    'registry.search': 'afo_registry_search',
+    'registry.inspect': 'afo_registry_inspect',
+    'github.repo.inspect': 'afo_github_repo_inspect',
+    'github.file.read': 'afo_github_file_read',
+    'github.workflow.runs': 'afo_github_workflow_runs'
+  };
+  return map[toolId] || null;
+}
+
+async function handleToolCheck(request, env) {
+  const url = new URL(request.url);
+  const capability = url.searchParams.get('capability') || '';
+  const result = await registrySearchD1(env, { capability, riskMax: 'destructive' });
+  const tools = arrayFromRegistryPayload(result.data);
+  const checks = tools.map((tool) => {
+    const toolId = tool.id || tool.name || '';
+    const implementation = localImplementationForTool(toolId);
+    return {
+      toolId,
+      name: tool.name || toolId,
+      risk: tool.risk || tool.permission || tool.riskLevel || 'read',
+      status: implementation ? 'callable' : 'not_implemented_yet',
+      implementation,
+      description: tool.description || ''
+    };
+  });
+  const summary = checks.reduce((acc, check) => {
+    acc.total += 1;
+    acc[check.status] = (acc[check.status] || 0) + 1;
+    return acc;
+  }, { total: 0, callable: 0, not_implemented_yet: 0 });
+  return json({ ok: true, buildId: BUILD_ID, source: result.ok ? 'D1 tools table' : 'unavailable', capability, summary, checks });
+}
+
 async function handleChat(request, env) {
   const input = await readJson(request);
   const provider = (input.provider || 'anthropic').toLowerCase();
@@ -589,8 +664,10 @@ export default {
     if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/app')) return appHtml(env);
     if (request.method === 'GET' && url.pathname === '/health') return json({ ok: true, buildId: BUILD_ID, name: 'afo-byok-agent-gateway', mode: 'ephemeral-provider-credential', supportedProviders: Object.keys(MODEL_OPTIONS), modelOptions: MODEL_OPTIONS, mcpUrl: env.AFO_MCP_URL || DEFAULT_MCP_URL, storesProviderCredentials: false, nativeToolAdapters: { anthropic: 'claude-tool-calling-basic', openai: 'function-calling', chatgpt: 'function-calling', gemini: 'function-calling' } });
     if (request.method === 'GET' && url.pathname === '/api/byok/models') return json({ ok: true, buildId: BUILD_ID, providers: Object.keys(MODEL_OPTIONS), modelOptions: MODEL_OPTIONS });
+    if (request.method === 'GET' && url.pathname === '/api/byok/selftest') return handleSelfTest(request, env);
+    if (request.method === 'GET' && url.pathname === '/api/byok/tools/check') return handleToolCheck(request, env);
     if (request.method === 'GET' && url.pathname === '/api/byok/chat') return chatHelp(env);
     if (request.method === 'POST' && url.pathname === '/api/byok/chat') return handleChat(request, env);
-    return json({ ok: false, buildId: BUILD_ID, error: 'not_found', path: url.pathname, method: request.method, available: ['GET /', 'GET /app', 'GET /health', 'GET /api/byok/models', 'GET /api/byok/chat', 'POST /api/byok/chat'] }, { status: 404 });
+    return json({ ok: false, buildId: BUILD_ID, error: 'not_found', path: url.pathname, method: request.method, available: ['GET /', 'GET /app', 'GET /health', 'GET /api/byok/models', 'GET /api/byok/selftest', 'GET /api/byok/tools/check', 'GET /api/byok/chat', 'POST /api/byok/chat'] }, { status: 404 });
   }
 };
